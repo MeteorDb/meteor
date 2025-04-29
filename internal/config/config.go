@@ -14,11 +14,12 @@ type MeteorDbConfig struct {
 }
 
 var Config *MeteorDbConfig
+const configPath = "./"
 
-func LoadConfig(path string) {
+func LoadConfig() {
 	viper.SetConfigName("config")
 	viper.SetConfigType("json")
-	viper.AddConfigPath(path)
+	viper.AddConfigPath(configPath)
 
 	if err := viper.ReadInConfig(); err != nil {
 		slog.Error("Failed to read config")

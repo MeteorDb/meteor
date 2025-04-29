@@ -1,7 +1,13 @@
 package main
 
-import "meteor/server"
+import (
+	"meteor/internal/config"
+	"meteor/server"
+)
+
+
 
 func main() {
+	config.LoadConfig()
 	server.Init()
 }
