@@ -2,8 +2,11 @@ package server
 
 import (
 	"context"
+	"fmt"
+	"io"
 	"log/slog"
 	"meteor/internal/config"
+	"meteor/internal/db"
 	"meteor/internal/logger"
 	"net"
 	"os"
@@ -20,48 +23,62 @@ func Init() {
 	wg := &sync.WaitGroup{}
 	wg.Add(1)
 
+	db, err := db.NewDB()
+	if err != nil {
+		slog.Error("Failed to initialize database", "error", err)
+		cancel()
+		return
+	}
+
 	go handleShutdown(cancel)
 
-	go runServer(ctx, wg)
+	go runServer(db, ctx, wg)
 
 	wg.Wait()
 	slog.Info("Server stopped")
 }
 
-func runServer(ctx context.Context, wg *sync.WaitGroup) {
+func runServer(db *db.DB, ctx context.Context, wg *sync.WaitGroup) {
 	defer wg.Done()
 	ln, err := net.Listen("tcp", config.Config.Host+":"+config.Config.Port)
+
 	if err != nil {
 		slog.Error("Failed to listen", "error", err)
 		return
 	}
 	defer ln.Close()
 	slog.Info("Server started", "host", config.Config.Host, "port", config.Config.Port)
-	listenForConnections(ctx, ln, wg)
+	listenForConnections(db, ctx, ln)
 }
 
-func listenForConnections(ctx context.Context, listener net.Listener, wg *sync.WaitGroup) {
+func listenForConnections(db *db.DB, ctx context.Context, listener net.Listener) {
+	// When the context is cancelled, Close() the listener to unblock Accept()
+	go func() {
+		<-ctx.Done()
+		slog.Info("Context cancelled, closing listener")
+		listener.Close()
+	}()
+
 	for {
-		select {
-		case <-ctx.Done():
-			slog.Info("No longer accepting connections")
-			return
-		default:
-			slog.Info("Waiting for connection")
-			conn, err := listener.Accept()
-			if err != nil {
-				slog.Error("Failed to accept connection", "error", err)
+		conn, err := listener.Accept()
+		if err != nil {
+			// If the context was cancelled, we expect an error from Close()
+			if ctx.Err() != nil {
+				slog.Info("Listener closed, stopping accept loop")
+				return
 			}
-			slog.Info("Accepted connection", "remoteAddr", conn.RemoteAddr().String())
-			go handleConnection(ctx, conn, wg)
+			// Otherwise, log and continue accepting
+			slog.Error("Failed to accept connection", "error", err)
+			continue
 		}
+
+		slog.Info("Accepted connection", "remoteAddr", conn.RemoteAddr().String())
+		go handleConnection(db, ctx, conn)
 	}
 }
 
-func handleConnection(ctx context.Context, conn net.Conn, wg *sync.WaitGroup) {
-	wg.Add(1)
+func handleConnection(db *db.DB, ctx context.Context, conn net.Conn) {
 	defer conn.Close()
-	defer wg.Done()
 
 	for {
 		select {
@@ -74,9 +91,19 @@ func handleConnection(ctx context.Context, conn net.Conn, wg *sync.WaitGroup) {
 			buffer := make([]byte, 4096)
 			n, err := conn.Read(buffer)
 			if err != nil {
-				slog.Error("Failed to read from connection", "error", err)
+				if err != io.EOF {
+					slog.Error("Failed to read from connection", "error", err)
+				}
 				return
 			}
+
+			cmd, err := db.Parser.Parse(buffer[:n])
+			if err != nil {
+				slog.Error("Failed to parse command", "error", err)
+				return
+			}
+
+			fmt.Println("Command parsed", "command", cmd)
 
 			response := append([]byte("response from server: "), buffer[:n]...)
 
