@@ -48,10 +48,10 @@ func runServer(db *db.DB, ctx context.Context, wg *sync.WaitGroup) {
 	}
 	defer ln.Close()
 	slog.Info("Server started", "host", config.Config.Host, "port", config.Config.Port)
-	listenForConnections(db, ctx, ln, wg)
+	listenForConnections(db, ctx, ln)
 }
 
-func listenForConnections(db *db.DB, ctx context.Context, listener net.Listener, wg *sync.WaitGroup) {
+func listenForConnections(db *db.DB, ctx context.Context, listener net.Listener) {
 	// When the context is cancelled, Close() the listener to unblock Accept()
 	go func() {
 		<-ctx.Done()
