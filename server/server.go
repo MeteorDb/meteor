@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"fmt"
+	"io"
 	"log/slog"
 	"meteor/internal/config"
 	"meteor/internal/db"
@@ -40,6 +41,7 @@ func Init() {
 func runServer(db *db.DB, ctx context.Context, wg *sync.WaitGroup) {
 	defer wg.Done()
 	ln, err := net.Listen("tcp", config.Config.Host+":"+config.Config.Port)
+
 	if err != nil {
 		slog.Error("Failed to listen", "error", err)
 		return
@@ -50,27 +52,33 @@ func runServer(db *db.DB, ctx context.Context, wg *sync.WaitGroup) {
 }
 
 func listenForConnections(db *db.DB, ctx context.Context, listener net.Listener, wg *sync.WaitGroup) {
+	// When the context is cancelled, Close() the listener to unblock Accept()
+	go func() {
+		<-ctx.Done()
+		slog.Info("Context cancelled, closing listener")
+		listener.Close()
+	}()
+
 	for {
-		select {
-		case <-ctx.Done():
-			slog.Info("No longer accepting connections")
-			return
-		default:
-			slog.Info("Waiting for connection")
-			conn, err := listener.Accept()
-			if err != nil {
-				slog.Error("Failed to accept connection", "error", err)
+		conn, err := listener.Accept()
+		if err != nil {
+			// If the context was cancelled, we expect an error from Close()
+			if ctx.Err() != nil {
+				slog.Info("Listener closed, stopping accept loop")
+				return
 			}
-			slog.Info("Accepted connection", "remoteAddr", conn.RemoteAddr().String())
-			go handleConnection(db, ctx, conn, wg)
+			// Otherwise, log and continue accepting
+			slog.Error("Failed to accept connection", "error", err)
+			continue
 		}
+
+		slog.Info("Accepted connection", "remoteAddr", conn.RemoteAddr().String())
+		go handleConnection(db, ctx, conn)
 	}
 }
 
-func handleConnection(db *db.DB, ctx context.Context, conn net.Conn, wg *sync.WaitGroup) {
-	wg.Add(1)
+func handleConnection(db *db.DB, ctx context.Context, conn net.Conn) {
 	defer conn.Close()
-	defer wg.Done()
 
 	for {
 		select {
@@ -83,7 +91,9 @@ func handleConnection(db *db.DB, ctx context.Context, conn net.Conn, wg *sync.Wa
 			buffer := make([]byte, 4096)
 			n, err := conn.Read(buffer)
 			if err != nil {
-				slog.Error("Failed to read from connection", "error", err)
+				if err != io.EOF {
+					slog.Error("Failed to read from connection", "error", err)
+				}
 				return
 			}
 
