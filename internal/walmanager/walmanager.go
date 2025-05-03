@@ -22,7 +22,8 @@ func NewWalManager() (*WalManager, error) {
 	var walFile *os.File
 	var walHeader *WalHeader = &WalHeader{
 		Version: 1,
-		RowStartOffset: WAL_HEADER_SIZE + 2, // 2 bytes for the header size
+		NextTransactionId: 0,
+		NextGsn: 0,
 		Checksum: 0,
 	}
 
@@ -45,14 +46,9 @@ func NewWalManager() (*WalManager, error) {
 	}
 
 	// Rewriting the header (even if it's already written)
-	var newOffset int64
-	if headerBytes, err := walHeader.MarshalBinary(); err != nil {
+	newOffset, err := writeWalHeader(walFile, walHeader)
+	if err != nil {
 		return nil, err
-	} else {
-		newOffset, err = common.WriteAtInFile(walFile, 0, headerBytes)
-		if err != nil {
-			return nil, err
-		}
 	}
 
 	walManager := &WalManager{
@@ -65,6 +61,44 @@ func NewWalManager() (*WalManager, error) {
 	walManager.lso.Store(newOffset)
 
 	return walManager, nil
+}
+
+func writeWalHeader(walFile *os.File, walHeader *WalHeader) (int64, error) {
+	var newOffset int64
+	if headerBytes, err := walHeader.MarshalBinary(); err != nil {
+		return 0, err
+	} else {
+		newOffset, err = common.WriteAtInFile(walFile, 0, headerBytes)
+		if err != nil {
+			return 0, err
+		}
+	}
+
+	return newOffset, nil
+}
+
+func (w *WalManager) AllocateTransactionIdBatch() (uint32, uint32) {
+	w.m.Lock()
+	defer w.m.Unlock()
+
+	transactionId := w.walHeader.NextTransactionId
+	w.walHeader.NextTransactionId += common.TRANSACTION_ID_ALLOCATION_BATCH_SIZE
+
+	writeWalHeader(w.walFile, w.walHeader)
+
+	return transactionId, w.walHeader.NextTransactionId
+}
+
+func (w *WalManager) AllocateGsnBatch() (uint32, uint32) {
+	w.m.Lock()
+	defer w.m.Unlock()
+
+	gsn := w.walHeader.NextGsn
+	w.walHeader.NextGsn += common.GSN_ALLOCATION_BATCH_SIZE
+
+	writeWalHeader(w.walFile, w.walHeader)
+
+	return gsn, w.walHeader.NextGsn
 }
 
 func (w *WalManager) AddRow(row *common.TransactionRow) error {

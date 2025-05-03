@@ -15,6 +15,10 @@ func NewDB() (*DB, error) {
 	if err != nil {
 		return nil, err
 	}
+	err = storeManager.RecoverStoreFromWal()
+	if err != nil {
+		return nil, err
+	}
 	return &DB{
 		Parser: parser.NewStringParser(),
 		StoreManager: storeManager,
