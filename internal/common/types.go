@@ -1,7 +1,62 @@
 package common
 
-type K []byte
-type V []byte
+type K struct {
+	Key string `json:"key"`
+	Gsn uint32 `json:"gsn"`
+}
+
+type V struct {
+	Type DataType `json:"type"`
+	Value []byte `json:"value"`
+}
+
+func (k *K) Hash() uint32 {
+	return uint32(k.Gsn)
+}
+
+func (k *K) MarshalBinary() ([]byte, error) {
+	bb := NewBinaryBuffer(0)
+
+	bb.WriteUint32(k.Gsn).WriteString(k.Key)
+
+	return bb.GetBuffer(), nil
+}
+
+func (k *K) UnmarshalBinary(data []byte) error {
+	bb := NewBinaryBufferFrom(&data, 0)
+
+	var gsn uint32
+	var key string
+	bb.ReadUint32(&gsn).ReadString(&key)
+
+	k.Gsn = gsn
+	k.Key = key
+
+	return nil
+}
+
+func (v *V) MarshalBinary() ([]byte, error) {
+	bb := NewBinaryBuffer(0)
+
+	bb.WriteUint8(uint8(v.Type))
+	bb.WriteBytes(v.Value)
+
+	return bb.GetBuffer(), nil
+}
+
+func (v *V) UnmarshalBinary(data []byte) error {
+	bb := NewBinaryBufferFrom(&data, 0)
+
+	var dataType uint8
+	valBytes := make([]byte, 0)
+
+	bb.ReadUint8(&dataType).ReadBytes(&valBytes)
+	
+	v.Type = DataType(dataType)
+	v.Value = valBytes
+
+	return nil
+}
 
 type Command struct {
 	Operation string   `json:"operation"`

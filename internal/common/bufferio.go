@@ -52,6 +52,10 @@ func max(a, b uint64) uint64 {
 	return b
 }
 
+func (b *BinaryBuffer) GetOffset() uint64 {
+	return b.offset
+}
+
 func (b *BinaryBuffer) GetBuffer() []byte {
 	return (*b.buf)[:b.offset]
 }

@@ -103,15 +103,14 @@ func handleConnection(db *db.DB, ctx context.Context, conn net.Conn) {
 				return
 			}
 
-			if cmd.Operation == "PUT" {
-				db.StoreManager.Put([]byte(cmd.Args[0]), []byte(cmd.Args[1]), 0)
+			res, err := db.StoreManager.PerformAction(cmd)
+			if err != nil {
+				res = []byte(fmt.Sprintf("error: %s", err))
 			}
 
 			fmt.Println("Command parsed", "command", cmd)
 
-			response := append([]byte("response from server: "), buffer[:n]...)
-
-			_, err = conn.Write(response)
+			_, err = conn.Write(res)
 			if err != nil {
 				slog.Error("Failed to write to connection", "error", err)
 				return

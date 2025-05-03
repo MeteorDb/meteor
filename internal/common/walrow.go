@@ -5,13 +5,12 @@ const (
 )
 
 type WalPayload struct {
-	Key []byte
-	OldValue []byte
-	NewValue []byte
+	Key K
+	OldValue V
+	NewValue V
 }
 
 type WalRow struct {
-	Gsn uint32 // Global Sequence Number
 	Lso int64 // Latest Sequence Offset
 	LogType uint8
 	TransactionId uint32
@@ -24,7 +23,26 @@ type WalRow struct {
 func (wp *WalPayload) MarshalBinary() ([]byte, error) {
 	bb := NewBinaryBuffer(0)
 
-	bb.WriteBytes(wp.Key).WriteBytes(wp.OldValue).WriteBytes(wp.NewValue)
+	keyBytes, err := wp.Key.MarshalBinary()
+	if err != nil {
+		return nil, err
+	}
+
+	bb.WriteBytes(keyBytes)
+
+	oldValueBytes, err := wp.OldValue.MarshalBinary()
+	if err != nil {
+		return nil, err
+	}
+
+	bb.WriteBytes(oldValueBytes)
+	
+	newValueBytes, err := wp.NewValue.MarshalBinary()
+	if err != nil {
+		return nil, err
+	}
+
+	bb.WriteBytes(newValueBytes)
 
 	return bb.GetBuffer(), nil
 }
@@ -32,7 +50,29 @@ func (wp *WalPayload) MarshalBinary() ([]byte, error) {
 func (wp *WalPayload) UnmarshalBinary(data []byte) error {
 	bb := NewBinaryBufferFrom(&data, 0)
 
-	bb.ReadBytes(&wp.Key).ReadBytes(&wp.OldValue).ReadBytes(&wp.NewValue)
+	keyBytes := make([]byte, 0)
+	bb.ReadBytes(&keyBytes)
+
+	err := wp.Key.UnmarshalBinary(keyBytes)
+	if err != nil {
+		return err
+	}
+
+	oldValueBytes := make([]byte, 0)
+	bb.ReadBytes(&oldValueBytes)
+
+	err = wp.OldValue.UnmarshalBinary(oldValueBytes)
+	if err != nil {
+		return err
+	}
+
+	newValueBytes := make([]byte, 0)
+	bb.ReadBytes(&newValueBytes)
+
+	err = wp.NewValue.UnmarshalBinary(newValueBytes)
+	if err != nil {
+		return err
+	}
 
 	return nil
 }
@@ -40,7 +80,7 @@ func (wp *WalPayload) UnmarshalBinary(data []byte) error {
 func (wr *WalRow) MarshalBinary() ([]byte, error) {
 	bb := NewBinaryBuffer(25) // 25 for the first 5 fields so number of resizing is minimal
 	
-	bb.WriteUint32(wr.Gsn).WriteInt64(wr.Lso).WriteUint8(wr.LogType).WriteUint32(wr.TransactionId).WriteInt64(wr.Timestamp).WriteString(wr.Operation)
+	bb.WriteInt64(wr.Lso).WriteUint8(wr.LogType).WriteUint32(wr.TransactionId).WriteInt64(wr.Timestamp).WriteString(wr.Operation)
 
 	payloadBytes, err := wr.Payload.MarshalBinary()
 	if err != nil {
@@ -55,7 +95,7 @@ func (wr *WalRow) MarshalBinary() ([]byte, error) {
 func (wr *WalRow) UnmarshalBinary(data []byte) error {
 	bb := NewBinaryBufferFrom(&data, 0)
 
-	bb.ReadUint32(&wr.Gsn).ReadInt64(&wr.Lso).ReadUint8(&wr.LogType).ReadUint32(&wr.TransactionId).ReadInt64(&wr.Timestamp).ReadString(&wr.Operation)
+	bb.ReadInt64(&wr.Lso).ReadUint8(&wr.LogType).ReadUint32(&wr.TransactionId).ReadInt64(&wr.Timestamp).ReadString(&wr.Operation)
 
 	payloadBytes := make([]byte, 0)
 	bb.ReadBytes(&payloadBytes)

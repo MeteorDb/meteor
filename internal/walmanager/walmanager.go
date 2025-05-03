@@ -2,7 +2,6 @@ package walmanager
 
 import (
 	"fmt"
-	"io"
 	"meteor/internal/common"
 	"os"
 	"sync"
@@ -75,16 +74,11 @@ func (w *WalManager) AddRow(row *common.TransactionRow) error {
 	lso := w.lso.Load()
 
 	walRow := &common.WalRow{
-		Gsn: row.Gsn,
 		Lso: lso,
 		LogType: 0,
 		TransactionId: row.TransactionId,
 		Operation: row.Operation,
-		Payload: common.WalPayload{
-			Key: row.Payload.Key,
-			OldValue: row.Payload.OldValue,
-			NewValue: row.Payload.NewValue,
-		},
+		Payload: common.WalPayload(row.Payload),
 		Timestamp: time.Now().Unix(),
 		Checksum: 0,
 	}
@@ -124,25 +118,10 @@ func (w *WalManager) ReadRow() (*common.TransactionRow, error) {
 	w.lso.Store(newOffset)
 
 	return &common.TransactionRow{
-		Gsn: walRow.Gsn,
 		TransactionId: walRow.TransactionId,
 		Operation: walRow.Operation,
 		Payload: common.TransactionPayload(walRow.Payload),
 	}, nil
-}
-
-func (w *WalManager) RecoverFromWal() error {
-	for {
-		transactionRow, err := w.ReadRow()
-		if err != nil {
-			if err == io.EOF {
-				// EOF means we've reached the end of the file, which is expected
-				return nil
-			}
-			return err
-		}
-		fmt.Println(transactionRow)
-	}
 }
 
 func (w *WalManager) Close() error {
