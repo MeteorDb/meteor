@@ -70,8 +70,7 @@ func (sm *StoreManager) Put(key string, value []byte, valueType common.DataType,
 	keyObj := common.K{Key: key, Gsn: gsn}
 	valueObj := common.V{Type: valueType, Value: value}
 
-	oldValue := sm.bufferStore.Get(keyObj)
-
+	oldValue := sm.bufferStore.Get(key)
 
 	transactionRow := common.NewTransactionRow(transactionId, "PUT", keyObj, oldValue, valueObj)
 
@@ -86,7 +85,7 @@ func (sm *StoreManager) Put(key string, value []byte, valueType common.DataType,
 }
 
 func (sm *StoreManager) Get(key string) (common.V, error) {
-	return sm.bufferStore.Get(common.K{Key: key, Gsn: 1}), nil
+	return sm.bufferStore.Get(key), nil
 }
 
 func (sm *StoreManager) Delete(key string, transactionId uint32) error {
@@ -94,7 +93,7 @@ func (sm *StoreManager) Delete(key string, transactionId uint32) error {
 	
 	keyObj := common.K{Key: key, Gsn: gsn}
 	
-	oldValue := sm.bufferStore.Get(keyObj)
+	oldValue := sm.bufferStore.Get(key)
 	tombstone := common.V{Type: common.TypeNull, Value: nil}
 
 	transactionRow := common.NewTransactionRow(transactionId, "DELETE", keyObj, oldValue, tombstone)

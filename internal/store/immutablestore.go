@@ -15,7 +15,7 @@ func NewImmutableStore() *ImmutableStore {
 	}
 }
 
-func (s *ImmutableStore) Get(key common.K) common.V {
+func (s *ImmutableStore) Get(key string) common.V {
 	return s.table.Get(key)
 }
 
@@ -23,7 +23,7 @@ func (s *ImmutableStore) Put(key common.K, value common.V) error {
 	return s.table.Put(key, value)
 }
 
-func (s *ImmutableStore) Delete(key common.K) error {
+func (s *ImmutableStore) Delete(key string) error {
 	return s.table.Delete(key)
 }
 

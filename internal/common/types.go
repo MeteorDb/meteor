@@ -10,8 +10,12 @@ type V struct {
 	Value []byte `json:"value"`
 }
 
-func (k *K) Hash() uint32 {
-	return uint32(k.Gsn)
+func HashKey(key string) uint32 {
+	var hash uint32
+	for i := range len(key) {
+		hash = 31*hash + uint32(key[i])
+	}
+	return hash
 }
 
 func (k *K) MarshalBinary() ([]byte, error) {
