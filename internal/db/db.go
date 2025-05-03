@@ -11,8 +11,12 @@ type DB struct {
 }
 
 func NewDB() (*DB, error) {
+	storeManager, err := storemanager.NewStoreManager()
+	if err != nil {
+		return nil, err
+	}
 	return &DB{
 		Parser: parser.NewStringParser(),
-		StoreManager: &storemanager.StoreManager{},
+		StoreManager: storeManager,
 	}, nil
 }

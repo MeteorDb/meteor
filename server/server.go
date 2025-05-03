@@ -103,6 +103,10 @@ func handleConnection(db *db.DB, ctx context.Context, conn net.Conn) {
 				return
 			}
 
+			if cmd.Operation == "PUT" {
+				db.StoreManager.Put([]byte(cmd.Args[0]), []byte(cmd.Args[1]), 0)
+			}
+
 			fmt.Println("Command parsed", "command", cmd)
 
 			response := append([]byte("response from server: "), buffer[:n]...)
