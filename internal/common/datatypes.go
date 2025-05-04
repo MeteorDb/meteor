@@ -2,6 +2,8 @@ package common
 
 type DataType uint8
 
+const TypeKeyNull string = "KeyNull"
+
 const (
 	TypeNull DataType = iota
 	TypeUint8

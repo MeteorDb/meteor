@@ -65,6 +65,18 @@ func (tm *TransactionManager) AddTransaction(transactionRow *common.TransactionR
 	return nil
 }
 
+func (tm *TransactionManager) GetTransactionRows(transactionId uint32) []*common.TransactionRow {
+	rows, ok := tm.transactionsMap[transactionId]
+	if !ok {
+		return make([]*common.TransactionRow, 0)
+	}
+	return rows
+}
+
+func (tm *TransactionManager) ClearTransactionRows(transactionId uint32) {
+	tm.transactionsMap[transactionId] = make([]*common.TransactionRow, 0)
+}
+
 func (tm *TransactionManager) isTransactionIdAllowedForConnection(transactionId uint32, conn *net.Conn) bool {
 	isNewTransactionId := tm.isNewTransactionId(transactionId)
 

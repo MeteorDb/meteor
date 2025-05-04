@@ -16,6 +16,7 @@ type WalManager struct {
 	m sync.Mutex
 	walFile *os.File
 	walHeader *WalHeader
+	walRowStartOffset int64
 }
 
 func NewWalManager() (*WalManager, error) {
@@ -57,6 +58,8 @@ func NewWalManager() (*WalManager, error) {
 		walFile: walFile,
 		walHeader: walHeader,
 	}
+
+	walManager.walRowStartOffset = newOffset
 
 	walManager.lso.Store(newOffset)
 
@@ -112,6 +115,7 @@ func (w *WalManager) AddRow(row *common.TransactionRow) error {
 		LogType: 0,
 		TransactionId: row.TransactionId,
 		Operation: row.Operation,
+		State: row.State,
 		Payload: &common.WalPayload{
 			Key: row.Payload.Key,
 			OldValue: row.Payload.OldValue,
@@ -164,12 +168,20 @@ func (w *WalManager) ReadRow() (*common.TransactionRow, error) {
 	return &common.TransactionRow{
 		TransactionId: walRow.TransactionId,
 		Operation: walRow.Operation,
+		State: walRow.State,
 		Payload: &common.TransactionPayload{
 			Key: walRow.Payload.Key,
 			OldValue: walRow.Payload.OldValue,
 			NewValue: walRow.Payload.NewValue,
 		},
 	}, nil
+}
+
+func (w *WalManager) ResetOffsetToFirstRow() {
+	w.m.Lock()
+	defer w.m.Unlock()
+
+	w.lso.Store(w.walRowStartOffset)
 }
 
 func (w *WalManager) Close() error {

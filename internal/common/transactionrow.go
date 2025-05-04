@@ -15,17 +15,19 @@ func (p *TransactionPayload) String() string {
 type TransactionRow struct {
 	TransactionId uint32
 	Operation string
+	State string
 	Payload *TransactionPayload
 }
 
 func (t *TransactionRow) String() string {
-	return fmt.Sprintf("{TransactionId: %d, Operation: %s, Payload: %v}", t.TransactionId, t.Operation, t.Payload)
+	return fmt.Sprintf("{TransactionId: %d, Operation: %s, State: %s, Payload: %v}", t.TransactionId, t.Operation, t.State, t.Payload)
 }
 
-func NewTransactionRow(transactionId uint32, operation string, key *K, oldValue *V, newValue *V) *TransactionRow {
+func NewTransactionRow(transactionId uint32, operation string, state string, key *K, oldValue *V, newValue *V) *TransactionRow {
 	return &TransactionRow{
 		TransactionId: transactionId,
 		Operation: operation,
+		State: state,
 		Payload: &TransactionPayload{
 			Key: key,
 			OldValue: oldValue,
