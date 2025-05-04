@@ -1,18 +1,26 @@
 package datatable
 
-import "meteor/internal/common"
+import (
+	"meteor/internal/common"
+	"sync"
+)
 
 type MapDataTable struct {
+	m sync.RWMutex
 	table map[string]map[uint32]*common.V
 }
 
 func NewMapDataTable() *MapDataTable {
 	return &MapDataTable{
+		m: sync.RWMutex{},
 		table: make(map[string]map[uint32]*common.V),
 	}
 }
 
 func (m *MapDataTable) Get(key string) *common.V {
+	m.m.RLock()
+	defer m.m.RUnlock()
+
 	gsnMap, ok := m.table[key]
 	if !ok {
 		return nil
@@ -29,6 +37,9 @@ func (m *MapDataTable) Get(key string) *common.V {
 }
 
 func (m *MapDataTable) Put(key *common.K, value *common.V) error {
+	m.m.Lock()
+	defer m.m.Unlock()
+
 	gsnMap, ok := m.table[key.Key]
 	if !ok {
 		gsnMap = make(map[uint32]*common.V)
@@ -48,6 +59,9 @@ func (m *MapDataTable) Size() (int, error) {
 }
 
 func (m *MapDataTable) Clear() error {
+	m.m.Lock()
+	defer m.m.Unlock()
+
 	m.table = make(map[string]map[uint32]*common.V)
 	return nil
 }
