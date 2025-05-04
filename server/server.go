@@ -94,10 +94,11 @@ func handleConnection(db *db.DB, ctx context.Context, conn net.Conn) {
 				if err != io.EOF {
 					slog.Error("Failed to read from connection", "error", err)
 				}
+				slog.Info("Connection closed", "remoteAddr", conn.RemoteAddr().String())
 				return
 			}
 
-			cmd, err := db.Parser.Parse(buffer[:n])
+			cmd, err := db.Parser.Parse(buffer[:n], &conn)
 			if err != nil {
 				slog.Error("Failed to parse command", "error", err)
 				return

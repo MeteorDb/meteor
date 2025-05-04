@@ -1,7 +1,10 @@
 package parser
 
-import "meteor/internal/common"
+import (
+	"meteor/internal/common"
+	"net"
+)
 
 type Parser interface {
-	Parse(data []byte) (*common.Command, error)
+	Parse(data []byte, conn *net.Conn) (*common.Command, error)
 }

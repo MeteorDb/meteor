@@ -1,6 +1,9 @@
 package common
 
-import "fmt"
+import (
+	"fmt"
+	"net"
+)
 
 type K struct {
 	Key string `json:"key"`
@@ -75,4 +78,5 @@ func (v *V) UnmarshalBinary(data []byte) error {
 type Command struct {
 	Operation string   `json:"operation"`
 	Args      []string `json:"args"`
+	Connection *net.Conn `json:"-"`
 }

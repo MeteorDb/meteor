@@ -108,7 +108,12 @@ func (sm *StoreManager) Put(cmd *common.Command) ([]byte, error) {
 
 	transactionRow := common.NewTransactionRow(transactionId, "PUT", keyObj, oldValue, valueObj)
 
-	err := sm.putByTransactionRow(transactionRow, USE_WAL)
+	err := sm.transactionManager.AddTransaction(transactionRow, cmd.Connection)
+	if err != nil {
+		return nil, err
+	}
+
+	err = sm.putByTransactionRow(transactionRow, USE_WAL)
 	if err != nil {
 		return nil, err
 	}
@@ -123,6 +128,8 @@ func (sm *StoreManager) putByTransactionRow(transactionRow *common.TransactionRo
 			return err
 		}
 	}
+
+	fmt.Printf("%v\n", transactionRow)
 
 	sm.bufferStore.Put(transactionRow.Payload.Key, transactionRow.Payload.NewValue)
 	return nil
@@ -175,7 +182,17 @@ func (sm *StoreManager) Delete(cmd *common.Command) ([]byte, error) {
 
 	transactionRow := common.NewTransactionRow(transactionId, "DELETE", keyObj, oldValue, tombstone)
 
-	return []byte("OK"), sm.putByTransactionRow(transactionRow, USE_WAL)
+	err := sm.transactionManager.AddTransaction(transactionRow, cmd.Connection)
+	if err != nil {
+		return nil, err
+	}
+
+	err = sm.putByTransactionRow(transactionRow, USE_WAL)
+	if err != nil {
+		return nil, err
+	}
+
+	return []byte("OK"), nil
 }
 
 func (sm *StoreManager) Size() (int, error) {
