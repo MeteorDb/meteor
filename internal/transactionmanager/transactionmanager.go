@@ -35,13 +35,12 @@ func NewTransactionManager(walManager *walmanager.WalManager) (*TransactionManag
 func (tm *TransactionManager) GetNewTransactionId() uint32 {
 	if tm.currentTransactionId.Load() == tm.transactionIdBatchEnd - 1 {
 		tm.m.Lock()
-		tm.transactionIdBatchStart, tm.transactionIdBatchEnd = tm.walManager.AllocateTransactionIdBatch()
-		toReturn := tm.currentTransactionId.Add(1)
-		tm.currentTransactionId.Store(tm.transactionIdBatchStart)
+		if tm.currentTransactionId.Load() == tm.transactionIdBatchEnd - 1 {
+			tm.transactionIdBatchStart, tm.transactionIdBatchEnd = tm.walManager.AllocateTransactionIdBatch()
+			tm.currentTransactionId.Store(tm.transactionIdBatchStart)
+		}
 		tm.m.Unlock()
-		return toReturn
 	}
-
 	return tm.currentTransactionId.Add(1)
 }
 

@@ -32,12 +32,11 @@ func NewGsnManager(walManager *walmanager.WalManager) (*GsnManager, error) {
 func (gm *GsnManager) GetNewGsn() uint32 {
 	if gm.gsn.Load() == gm.gsnBatchEnd - 1 {
 		gm.m.Lock()
-		gm.gsnBatchStart, gm.gsnBatchEnd = gm.walManager.AllocateGsnBatch()
-		toReturn := gm.gsn.Add(1)
-		gm.gsn.Store(gm.gsnBatchStart)
+		if gm.gsn.Load() == gm.gsnBatchEnd - 1 {
+			gm.gsnBatchStart, gm.gsnBatchEnd = gm.walManager.AllocateGsnBatch()
+			gm.gsn.Store(gm.gsnBatchStart)
+		}
 		gm.m.Unlock()
-		return toReturn
 	}
-
 	return gm.gsn.Add(1)
 }
