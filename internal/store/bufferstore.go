@@ -25,12 +25,12 @@ func NewBufferStore() *BufferStore {
 	}
 }
 
-func (s *BufferStore) Get(key string) common.V {
+func (s *BufferStore) Get(key string) *common.V {
 	shardIndex := common.HashKey(key) % NUMBER_OF_SHARDS
 	return s.tableShards[shardIndex].Get(key)
 }
 
-func (s *BufferStore) Put(key common.K, value common.V) error {
+func (s *BufferStore) Put(key *common.K, value *common.V) error {
 	shardIndex := common.HashKey(key.Key) % NUMBER_OF_SHARDS
 	return s.tableShards[shardIndex].Put(key, value)
 }

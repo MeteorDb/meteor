@@ -1,13 +1,23 @@
 package common
 
+import "fmt"
+
 type K struct {
 	Key string `json:"key"`
 	Gsn uint32 `json:"gsn"`
 }
 
+func (k *K) String() string {
+	return fmt.Sprintf("{Key: %s, Gsn: %d}", k.Key, k.Gsn)
+}
+
 type V struct {
 	Type DataType `json:"type"`
 	Value []byte `json:"value"`
+}
+
+func (v *V) String() string {
+	return fmt.Sprintf("{Type: %d, Value: %s}", v.Type, v.Value)
 }
 
 func HashKey(key string) uint32 {

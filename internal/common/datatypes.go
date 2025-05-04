@@ -18,6 +18,7 @@ const (
 	
 	TypeBytes
 	TypeString
+	TypeTombstone
 )
 
 func (dt DataType) String() string {

@@ -3,19 +3,19 @@ package datatable
 import "meteor/internal/common"
 
 type MapDataTable struct {
-	table map[string]map[uint32]common.V
+	table map[string]map[uint32]*common.V
 }
 
 func NewMapDataTable() *MapDataTable {
 	return &MapDataTable{
-		table: make(map[string]map[uint32]common.V),
+		table: make(map[string]map[uint32]*common.V),
 	}
 }
 
-func (m *MapDataTable) Get(key string) common.V {
+func (m *MapDataTable) Get(key string) *common.V {
 	gsnMap, ok := m.table[key]
 	if !ok {
-		return common.V{}
+		return nil
 	}
 
 	var maxGsn uint32
@@ -28,10 +28,10 @@ func (m *MapDataTable) Get(key string) common.V {
 	return gsnMap[maxGsn]
 }
 
-func (m *MapDataTable) Put(key common.K, value common.V) error {
+func (m *MapDataTable) Put(key *common.K, value *common.V) error {
 	gsnMap, ok := m.table[key.Key]
 	if !ok {
-		gsnMap = make(map[uint32]common.V)
+		gsnMap = make(map[uint32]*common.V)
 		m.table[key.Key] = gsnMap
 	}
 	gsnMap[key.Gsn] = value
@@ -48,6 +48,6 @@ func (m *MapDataTable) Size() (int, error) {
 }
 
 func (m *MapDataTable) Clear() error {
-	m.table = make(map[string]map[uint32]common.V)
+	m.table = make(map[string]map[uint32]*common.V)
 	return nil
 }

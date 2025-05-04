@@ -105,7 +105,7 @@ func handleConnection(db *db.DB, ctx context.Context, conn net.Conn) {
 
 			res, err := db.StoreManager.PerformAction(cmd)
 			if err != nil {
-				res = []byte(fmt.Sprintf("error: %s", err))
+				res = []byte(fmt.Sprintf("error: %s\n", err))
 			}
 
 			fmt.Println("Command parsed", "command", cmd)

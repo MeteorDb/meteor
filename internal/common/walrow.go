@@ -5,9 +5,9 @@ const (
 )
 
 type WalPayload struct {
-	Key K
-	OldValue V
-	NewValue V
+	Key *K
+	OldValue *V
+	NewValue *V
 }
 
 type WalRow struct {
@@ -16,7 +16,7 @@ type WalRow struct {
 	TransactionId uint32
 	Timestamp int64
 	Operation string
-	Payload WalPayload
+	Payload *WalPayload
 	Checksum uint32
 }
 
@@ -29,6 +29,10 @@ func (wp *WalPayload) MarshalBinary() ([]byte, error) {
 	}
 
 	bb.WriteBytes(keyBytes)
+
+	if wp.OldValue == nil {
+		wp.OldValue = &V{Type: TypeNull, Value: []byte{}}
+	}
 
 	oldValueBytes, err := wp.OldValue.MarshalBinary()
 	if err != nil {

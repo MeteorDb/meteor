@@ -1,22 +1,32 @@
 package common
 
+import "fmt"
+
 type TransactionPayload struct {
-	Key K
-	OldValue V
-	NewValue V
+	Key *K
+	OldValue *V
+	NewValue *V
+}
+
+func (p *TransactionPayload) String() string {
+	return fmt.Sprintf("{Key: %v, OldValue: %v, NewValue: %v}", p.Key, p.OldValue, p.NewValue)
 }
 
 type TransactionRow struct {
 	TransactionId uint32
 	Operation string
-	Payload TransactionPayload
+	Payload *TransactionPayload
 }
 
-func NewTransactionRow(transactionId uint32, operation string, key K, oldValue V, newValue V) *TransactionRow {
+func (t *TransactionRow) String() string {
+	return fmt.Sprintf("{TransactionId: %d, Operation: %s, Payload: %v}", t.TransactionId, t.Operation, t.Payload)
+}
+
+func NewTransactionRow(transactionId uint32, operation string, key *K, oldValue *V, newValue *V) *TransactionRow {
 	return &TransactionRow{
 		TransactionId: transactionId,
 		Operation: operation,
-		Payload: TransactionPayload{
+		Payload: &TransactionPayload{
 			Key: key,
 			OldValue: oldValue,
 			NewValue: newValue,

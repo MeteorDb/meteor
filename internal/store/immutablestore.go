@@ -15,11 +15,11 @@ func NewImmutableStore() *ImmutableStore {
 	}
 }
 
-func (s *ImmutableStore) Get(key string) common.V {
+func (s *ImmutableStore) Get(key string) *common.V {
 	return s.table.Get(key)
 }
 
-func (s *ImmutableStore) Put(key common.K, value common.V) error {
+func (s *ImmutableStore) Put(key *common.K, value *common.V) error {
 	return s.table.Put(key, value)
 }
 

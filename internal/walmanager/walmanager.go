@@ -112,7 +112,11 @@ func (w *WalManager) AddRow(row *common.TransactionRow) error {
 		LogType: 0,
 		TransactionId: row.TransactionId,
 		Operation: row.Operation,
-		Payload: common.WalPayload(row.Payload),
+		Payload: &common.WalPayload{
+			Key: row.Payload.Key,
+			OldValue: row.Payload.OldValue,
+			NewValue: row.Payload.NewValue,
+		},
 		Timestamp: time.Now().Unix(),
 		Checksum: 0,
 	}
@@ -142,7 +146,13 @@ func (w *WalManager) ReadRow() (*common.TransactionRow, error) {
 
 	lso := w.lso.Load()
 
-	walRow := &common.WalRow{}
+	walRow := &common.WalRow{
+		Payload: &common.WalPayload{
+			Key: &common.K{},
+			OldValue: &common.V{},
+			NewValue: &common.V{},
+		},
+	}
 
 	newOffset, err := common.ReadAtInFile(w.walFile, lso, walRow)
 	if err != nil {
@@ -154,7 +164,11 @@ func (w *WalManager) ReadRow() (*common.TransactionRow, error) {
 	return &common.TransactionRow{
 		TransactionId: walRow.TransactionId,
 		Operation: walRow.Operation,
-		Payload: common.TransactionPayload(walRow.Payload),
+		Payload: &common.TransactionPayload{
+			Key: walRow.Payload.Key,
+			OldValue: walRow.Payload.OldValue,
+			NewValue: walRow.Payload.NewValue,
+		},
 	}, nil
 }
 

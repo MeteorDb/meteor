@@ -1,6 +1,7 @@
 package storemanager
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"meteor/internal/common"
@@ -9,6 +10,7 @@ import (
 	"meteor/internal/store"
 	"meteor/internal/transactionmanager"
 	"meteor/internal/walmanager"
+	"strconv"
 )
 
 const (
@@ -65,21 +67,53 @@ func (sm *StoreManager) RecoverStoreFromWal() error {
 			return err
 		}
 		sm.putByTransactionRow(transactionRow, false)
-		fmt.Printf("%+v\n", transactionRow)
+		fmt.Printf("%v\n", transactionRow)
 	}
 }
 
-func (sm *StoreManager) Put(key string, value []byte, valueType common.DataType, transactionId uint32) error {
+func (sm *StoreManager) Put(cmd *common.Command) ([]byte, error) {
+
+	if len(cmd.Args) < 2 {
+		return nil, errors.New("command must have at least 2 arguments")
+	}
+
+	key := cmd.Args[0]
+	value := []byte(cmd.Args[1])
+
+	var valueType common.DataType
+	var transactionId uint32
+
+	if len(cmd.Args) >= 3 {
+		valueType = common.DataType(cmd.Args[2][0] - '0')
+	} else {
+		valueType = common.TypeString
+	}
+
+	if len(cmd.Args) == 4 {
+		transactionId64Bits, err := strconv.ParseUint(cmd.Args[3], 10, 32)
+		if err != nil {
+			return nil, errors.New("invalid transaction id")
+		}
+		transactionId = uint32(transactionId64Bits)
+	} else {
+		transactionId = sm.transactionManager.GetNewTransactionId()
+	}
+
 	gsn := sm.gsnManager.GetNewGsn()
 
-	keyObj := common.K{Key: key, Gsn: gsn}
-	valueObj := common.V{Type: valueType, Value: value}
+	keyObj := &common.K{Key: key, Gsn: gsn}
+	valueObj := &common.V{Type: valueType, Value: value}
 
 	oldValue := sm.bufferStore.Get(key)
 
 	transactionRow := common.NewTransactionRow(transactionId, "PUT", keyObj, oldValue, valueObj)
 
-	return sm.putByTransactionRow(transactionRow, USE_WAL)
+	err := sm.putByTransactionRow(transactionRow, USE_WAL)
+	if err != nil {
+		return nil, err
+	}
+
+	return []byte("OK"), nil
 }
 
 func (sm *StoreManager) putByTransactionRow(transactionRow *common.TransactionRow, useWal bool) error {
@@ -94,21 +128,54 @@ func (sm *StoreManager) putByTransactionRow(transactionRow *common.TransactionRo
 	return nil
 }
 
-func (sm *StoreManager) Get(key string) (common.V, error) {
-	return sm.bufferStore.Get(key), nil
+func (sm *StoreManager) Get(cmd *common.Command) ([]byte, error) {
+	if len(cmd.Args) != 1 {
+		return nil, errors.New("command must have only one argument")
+	}
+
+	key := cmd.Args[0]
+	
+	v := sm.bufferStore.Get(key)
+
+	if v == nil {
+		return []byte("-1"), nil
+	}
+
+	if v.Type == common.TypeTombstone {
+		return []byte("-2"), nil
+	}
+
+	return v.Value, nil
 }
 
-func (sm *StoreManager) Delete(key string, transactionId uint32) error {
+func (sm *StoreManager) Delete(cmd *common.Command) ([]byte, error) {
+	if len(cmd.Args) < 1 {
+		return nil, errors.New("command must have at least one argument")
+	}
+
+	key := cmd.Args[0]
+
+	var transactionId uint32
+	if len(cmd.Args) == 2 {
+		transactionId64Bits, err := strconv.ParseUint(cmd.Args[1], 10, 32)
+		if err != nil {
+			return nil, errors.New("invalid transaction id")
+		}
+		transactionId = uint32(transactionId64Bits)
+	} else {
+		transactionId = sm.transactionManager.GetNewTransactionId()
+	}
+
 	gsn := sm.gsnManager.GetNewGsn()
 
-	keyObj := common.K{Key: key, Gsn: gsn}
+	keyObj := &common.K{Key: key, Gsn: gsn}
 
 	oldValue := sm.bufferStore.Get(key)
-	tombstone := common.V{Type: common.TypeNull, Value: nil}
+	tombstone := &common.V{Type: common.TypeTombstone, Value: nil}
 
 	transactionRow := common.NewTransactionRow(transactionId, "DELETE", keyObj, oldValue, tombstone)
 
-	return sm.putByTransactionRow(transactionRow, USE_WAL)
+	return []byte("OK"), sm.putByTransactionRow(transactionRow, USE_WAL)
 }
 
 func (sm *StoreManager) Size() (int, error) {
@@ -120,22 +187,22 @@ func (sm *StoreManager) Reset() error {
 }
 
 func (sm *StoreManager) PerformAction(cmd *common.Command) ([]byte, error) {
+	var res []byte
 	var err error
-	var val common.V
 	switch cmd.Operation {
 	case "PUT":
-		err = sm.Put(cmd.Args[0], []byte(cmd.Args[1]), common.DataType(cmd.Args[2][0]-'0'), 0)
+		res, err = sm.Put(cmd)
 	case "DELETE":
-		err = sm.Delete(cmd.Args[0], 0)
+		res, err = sm.Delete(cmd)
 	case "GET":
-		val, err = sm.Get(cmd.Args[0])
+		res, err = sm.Get(cmd)
 	}
 
 	if err != nil {
 		return nil, err
 	}
 
-	res := fmt.Appendf(nil, "value: %s  type: %s\n", val.Value, val.Type)
+	res = append(res, '\n')
 
 	return res, nil
 }
