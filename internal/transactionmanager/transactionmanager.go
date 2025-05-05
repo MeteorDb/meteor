@@ -3,6 +3,7 @@ package transactionmanager
 import (
 	"errors"
 	"meteor/internal/common"
+	"meteor/internal/store"
 	"meteor/internal/walmanager"
 	"net"
 	"slices"
@@ -11,7 +12,7 @@ import (
 )
 
 type TransactionManager struct {
-	transactionsMap map[uint32][]*common.TransactionRow
+	transactionStoreMap map[uint32]store.Store
 	connToTransactionIdsMap map[*net.Conn][]uint32
 	walManager *walmanager.WalManager
 	currentTransactionId atomic.Uint32
@@ -24,7 +25,7 @@ func NewTransactionManager(walManager *walmanager.WalManager) (*TransactionManag
 	transactionIdBatchStart, transactionIdBatchEnd := walManager.AllocateTransactionIdBatch()
 	transactionManager := &TransactionManager{
 		walManager: walManager,
-		transactionsMap: make(map[uint32][]*common.TransactionRow),
+		transactionStoreMap: make(map[uint32]store.Store),
 		connToTransactionIdsMap: make(map[*net.Conn][]uint32),
 		currentTransactionId: atomic.Uint32{},
 		transactionIdBatchStart: transactionIdBatchStart,
@@ -56,25 +57,29 @@ func (tm *TransactionManager) AddTransaction(transactionRow *common.TransactionR
 
 	tm.registerTransactionForConnection(transactionRow.TransactionId, conn)
 
-	transactionsArr, ok := tm.transactionsMap[transactionRow.TransactionId]
+	transactionStore, ok := tm.transactionStoreMap[transactionRow.TransactionId]
 	if !ok {
-		tm.transactionsMap[transactionRow.TransactionId] = make([]*common.TransactionRow, 0)
+		transactionStore = store.NewBufferStore()
+		tm.transactionStoreMap[transactionRow.TransactionId] = transactionStore
 	}
-	tm.transactionsMap[transactionRow.TransactionId] = append(transactionsArr, transactionRow)
+	
+	if slices.Contains([]string{common.DB_OP_PUT, common.DB_OP_DELETE}, transactionRow.Operation) {
+		transactionStore.Put(transactionRow.Payload.Key, transactionRow.Payload.NewValue)
+	}
 
 	return nil
 }
 
-func (tm *TransactionManager) GetTransactionRows(transactionId uint32) []*common.TransactionRow {
-	rows, ok := tm.transactionsMap[transactionId]
+func (tm *TransactionManager) GetTransactionStore(transactionId uint32) store.Store {
+	store, ok := tm.transactionStoreMap[transactionId]
 	if !ok {
-		return make([]*common.TransactionRow, 0)
+		return nil
 	}
-	return rows
+	return store
 }
 
-func (tm *TransactionManager) ClearTransactionRows(transactionId uint32) {
-	tm.transactionsMap[transactionId] = make([]*common.TransactionRow, 0)
+func (tm *TransactionManager) ClearTransactionStore(transactionId uint32) {
+	delete(tm.transactionStoreMap, transactionId)
 }
 
 func (tm *TransactionManager) isTransactionIdAllowedForConnection(transactionId uint32, conn *net.Conn) bool {
@@ -92,7 +97,7 @@ func (tm *TransactionManager) isTransactionIdAllowedForConnection(transactionId 
 }
 
 func (tm *TransactionManager) isNewTransactionId(transactionId uint32) bool {
-	for tId := range tm.transactionsMap {
+	for tId := range tm.transactionStoreMap {
 		if tId == transactionId {
 			return false
 		}
@@ -117,4 +122,16 @@ func (tm *TransactionManager) registerTransactionForConnection(transactionId uin
 	if !isPresent {
 		tm.connToTransactionIdsMap[conn] = append(transactionIds, transactionId)
 	}
+}
+
+func (tm *TransactionManager) GetStoreByTransactionId(transactionId uint32, conn *net.Conn) (store.Store, error) {
+	if !tm.isTransactionIdAllowedForConnection(transactionId, conn) {
+		return nil,errors.New("transaction id not allowed for connection")
+	}
+
+	store, ok := tm.transactionStoreMap[transactionId]
+	if !ok {
+		return nil, nil
+	}
+	return store, nil
 }

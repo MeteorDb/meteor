@@ -58,3 +58,16 @@ func (s *BufferStore) Reset() error {
 	}
 	return nil
 }
+
+func (s *BufferStore) Keys() []string {
+	keys := make([]string, 0)
+	for _, shard := range s.tableShards {
+		keys = append(keys, shard.Keys()...)
+	}
+	return keys
+}
+
+func (s *BufferStore) GetLatestGsn(key string) (uint32, error) {
+	shardIndex := common.HashKey(key) % NUMBER_OF_SHARDS
+	return s.tableShards[shardIndex].GetLatestGsn(key)
+}

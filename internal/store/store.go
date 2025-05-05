@@ -8,4 +8,6 @@ type Store interface {
 	Delete(key string) error
 	Size() (int, error)
 	Reset() error
+	Keys() []string
+	GetLatestGsn(key string) (uint32, error)
 }

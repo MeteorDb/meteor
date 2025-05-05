@@ -1,6 +1,7 @@
 package datatable
 
 import (
+	"errors"
 	"meteor/internal/common"
 	"sync"
 )
@@ -64,4 +65,33 @@ func (m *MapDataTable) Clear() error {
 
 	m.table = make(map[string]map[uint32]*common.V)
 	return nil
+}
+
+func (m *MapDataTable) Keys() []string {
+	m.m.RLock()
+	defer m.m.RUnlock()
+
+	keys := make([]string, 0, len(m.table))
+	for key := range m.table {
+		keys = append(keys, key)
+	}
+	return keys
+}
+
+func (m *MapDataTable) GetLatestGsn(key string) (uint32, error) {
+	m.m.RLock()
+	defer m.m.RUnlock()
+
+	gsnMap, ok := m.table[key]
+	if !ok {
+		return 0, errors.New("key not found")
+	}
+
+	var maxGsn uint32
+	for gsn := range gsnMap {
+		if gsn > maxGsn {
+			maxGsn = gsn
+		}
+	}
+	return maxGsn, nil
 }

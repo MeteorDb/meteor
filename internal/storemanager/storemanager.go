@@ -110,8 +110,6 @@ func readWalRows(walManager *walmanager.WalManager, callback func(transactionRow
 	}
 }
 
-// TODO: While in transaction, mutations are queued while GET fetches from buffer store. GET with transaction id should also check its own transaction queue to fetch the latest value.
-
 func (sm *StoreManager) Begin(cmd *common.Command) ([]byte, error) {
 	if len(cmd.Args) != 0 {
 		return nil, errors.New("command must have no arguments")
@@ -163,13 +161,18 @@ func (sm *StoreManager) Commit(cmd *common.Command) ([]byte, error) {
 		return nil, err
 	}
 
-	transactionRows := sm.transactionManager.GetTransactionRows(transactionId)
-
-	for _, transactionRow := range transactionRows {
-		sm.putByTransactionRow(transactionRow)
+	transactionStore := sm.transactionManager.GetTransactionStore(transactionId)
+	if transactionStore != nil {
+		for _, key := range transactionStore.Keys() {
+			latestGsn, err := transactionStore.GetLatestGsn(key)
+			if err != nil {
+				return nil, err
+			}
+			sm.bufferStore.Put(&common.K{Key: key, Gsn: latestGsn}, transactionStore.Get(key))
+		}
 	}
 
-	sm.transactionManager.ClearTransactionRows(transactionId)
+	sm.transactionManager.ClearTransactionStore(transactionId)
 
 	return []byte("OK"), nil
 }
@@ -200,7 +203,7 @@ func (sm *StoreManager) Rollback(cmd *common.Command) ([]byte, error) {
 		return nil, err
 	}
 
-	sm.transactionManager.ClearTransactionRows(transactionId)
+	sm.transactionManager.ClearTransactionStore(transactionId)
 
 	return []byte("OK"), nil
 }
@@ -290,11 +293,31 @@ func (sm *StoreManager) putByTransactionRow(transactionRow *common.TransactionRo
 }
 
 func (sm *StoreManager) Get(cmd *common.Command) ([]byte, error) {
-	if len(cmd.Args) != 1 {
-		return nil, errors.New("command must have only one argument")
+	if len(cmd.Args) < 1 {
+		return nil, errors.New("command must have at least one argument")
 	}
 
 	key := cmd.Args[0]
+
+	if len(cmd.Args) == 2 {
+		transactionId64Bits, err := strconv.ParseUint(cmd.Args[1], 10, 32)
+		if err != nil {
+			return nil, errors.New("invalid transaction id")
+		}
+		transactionId := uint32(transactionId64Bits)
+
+		store, err := sm.transactionManager.GetStoreByTransactionId(transactionId, cmd.Connection)
+		if err != nil {
+			return nil, err
+		}
+
+		if store != nil {
+			v := store.Get(key)
+			if v != nil {
+				return v.Value, nil
+			}
+		}
+	}
 
 	v := sm.bufferStore.Get(key)
 
