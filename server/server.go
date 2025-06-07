@@ -5,8 +5,10 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"meteor/internal/commands"
+	"meteor/internal/common"
 	"meteor/internal/config"
-	"meteor/internal/db"
+	"meteor/internal/dbmanager"
 	"meteor/internal/logger"
 	"net"
 	"os"
@@ -23,7 +25,7 @@ func Init() {
 	wg := &sync.WaitGroup{}
 	wg.Add(1)
 
-	db, err := db.NewDB()
+	dm, err := dbmanager.NewDBManager()
 	if err != nil {
 		slog.Error("Failed to initialize database", "error", err)
 		cancel()
@@ -32,13 +34,13 @@ func Init() {
 
 	go handleShutdown(cancel)
 
-	go runServer(db, ctx, wg)
+	go runServer(dm, ctx, wg)
 
 	wg.Wait()
 	slog.Info("Server stopped")
 }
 
-func runServer(db *db.DB, ctx context.Context, wg *sync.WaitGroup) {
+func runServer(dm *dbmanager.DBManager, ctx context.Context, wg *sync.WaitGroup) {
 	defer wg.Done()
 	ln, err := net.Listen("tcp", config.Config.Host+":"+config.Config.Port)
 
@@ -48,10 +50,10 @@ func runServer(db *db.DB, ctx context.Context, wg *sync.WaitGroup) {
 	}
 	defer ln.Close()
 	slog.Info("Server started", "host", config.Config.Host, "port", config.Config.Port)
-	listenForConnections(db, ctx, ln)
+	listenForConnections(dm, ctx, ln)
 }
 
-func listenForConnections(db *db.DB, ctx context.Context, listener net.Listener) {
+func listenForConnections(dm *dbmanager.DBManager, ctx context.Context, listener net.Listener) {
 	// When the context is cancelled, Close() the listener to unblock Accept()
 	go func() {
 		<-ctx.Done()
@@ -73,11 +75,11 @@ func listenForConnections(db *db.DB, ctx context.Context, listener net.Listener)
 		}
 
 		slog.Info("Accepted connection", "remoteAddr", conn.RemoteAddr().String())
-		go handleConnection(db, ctx, conn)
+		go handleConnection(dm, ctx, conn)
 	}
 }
 
-func handleConnection(db *db.DB, ctx context.Context, conn net.Conn) {
+func handleConnection(dm *dbmanager.DBManager, ctx context.Context, conn net.Conn) {
 	defer conn.Close()
 
 	for {
@@ -98,13 +100,13 @@ func handleConnection(db *db.DB, ctx context.Context, conn net.Conn) {
 				return
 			}
 
-			cmd, err := db.Parser.Parse(buffer[:n], &conn)
+			cmd, err := dm.Parser.Parse(buffer[:n], &conn)
 			if err != nil {
 				slog.Error("Failed to parse command", "error", err)
 				return
 			}
 
-			res, err := db.StoreManager.PerformAction(cmd)
+			res, err := performOperation(dm, cmd)
 			if err != nil {
 				res = []byte(fmt.Sprintf("error: %s\n", err))
 			}
@@ -126,4 +128,18 @@ func handleShutdown(contextCancel context.CancelFunc) {
 	<-sig
 	slog.Info("Received shutdown signal")
 	contextCancel()
+}
+
+func performOperation(dm *dbmanager.DBManager, cmd *common.Command) ([]byte, error) {
+	spec, ok := commands.Get(cmd.Operation)
+    if !ok {
+        return nil, fmt.Errorf("unknown operation %q", cmd.Operation)
+    }
+
+    res, err := spec.Handler(dm, cmd)
+	if err != nil {
+        return nil, err
+    }
+
+    return append(res, '\n'), nil
 }
