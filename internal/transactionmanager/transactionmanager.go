@@ -56,14 +56,13 @@ func (tm *TransactionManager) AddTransaction(transactionRow *common.TransactionR
 	}
 
 	tm.registerTransactionForConnection(transactionRow.TransactionId, conn)
-
-	transactionStore, ok := tm.transactionStoreMap[transactionRow.TransactionId]
-	if !ok {
-		transactionStore = store.NewBufferStore()
-		tm.transactionStoreMap[transactionRow.TransactionId] = transactionStore
-	}
 	
 	if slices.Contains([]string{common.DB_OP_PUT, common.DB_OP_DELETE}, transactionRow.Operation) {
+		transactionStore, ok := tm.transactionStoreMap[transactionRow.TransactionId]
+		if !ok {
+			transactionStore = store.NewBufferStore()
+			tm.transactionStoreMap[transactionRow.TransactionId] = transactionStore
+		}
 		transactionStore.Put(transactionRow.Payload.Key, transactionRow.Payload.NewValue)
 	}
 
@@ -109,6 +108,7 @@ func (tm *TransactionManager) registerTransactionForConnection(transactionId uin
 	transactionIds, ok := tm.connToTransactionIdsMap[conn]
 	if !ok {
 		tm.connToTransactionIdsMap[conn] = make([]uint32, 0)
+		transactionIds = tm.connToTransactionIdsMap[conn]
 	}
 
 	// should be replaced with a set
