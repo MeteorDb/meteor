@@ -94,20 +94,24 @@ func handleConnection(db *db.DB, ctx context.Context, conn net.Conn) {
 				if err != io.EOF {
 					slog.Error("Failed to read from connection", "error", err)
 				}
+				slog.Info("Connection closed", "remoteAddr", conn.RemoteAddr().String())
 				return
 			}
 
-			cmd, err := db.Parser.Parse(buffer[:n])
+			cmd, err := db.Parser.Parse(buffer[:n], &conn)
 			if err != nil {
 				slog.Error("Failed to parse command", "error", err)
 				return
 			}
 
+			res, err := db.StoreManager.PerformAction(cmd)
+			if err != nil {
+				res = []byte(fmt.Sprintf("error: %s\n", err))
+			}
+
 			fmt.Println("Command parsed", "command", cmd)
 
-			response := append([]byte("response from server: "), buffer[:n]...)
-
-			_, err = conn.Write(response)
+			_, err = conn.Write(res)
 			if err != nil {
 				slog.Error("Failed to write to connection", "error", err)
 				return

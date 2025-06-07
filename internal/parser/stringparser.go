@@ -3,6 +3,7 @@ package parser
 import (
 	"errors"
 	"meteor/internal/common"
+	"net"
 	"strings"
 )
 
@@ -12,7 +13,7 @@ func NewStringParser() *StringParser {
 	return &StringParser{}
 }
 
-func (p *StringParser) Parse(data []byte) (*common.Command, error) {
+func (p *StringParser) Parse(data []byte, conn *net.Conn) (*common.Command, error) {
 	s := string(data)
     parts := strings.Fields(s)
     if len(parts) == 0 {
@@ -29,5 +30,6 @@ func (p *StringParser) Parse(data []byte) (*common.Command, error) {
     return &common.Command{
         Operation: op,
         Args:      args,
+		Connection: conn,
     }, nil
 }
