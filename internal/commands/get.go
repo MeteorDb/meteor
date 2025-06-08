@@ -31,18 +31,26 @@ func ensureGet(dm *dbmanager.DBManager, cmd *common.Command) (*GetArgs, error) {
 		transactionId: 0,
 	}
 
+	if len(cmd.Args) == 1 {
+		getArgs.transactionId = dm.TransactionManager.GetNewTransactionId()
+	}
+
 	if len(cmd.Args) == 2 {
 		transactionId64Bits, err := strconv.ParseUint(cmd.Args[1], 10, 32)
 		if err != nil {
 			return nil, errors.New("invalid transactionId")
 		}
-		transactionId := uint32(transactionId64Bits)
-		getArgs.transactionId = transactionId
-		getArgs.isPartOfExistingTransaction = true
+		getArgs.transactionId = uint32(transactionId64Bits)
+
+		if dm.TransactionManager.IsNewTransactionId(getArgs.transactionId) {
+			return nil, errors.New("transactionId not allowed")
+		} else {
+			getArgs.isPartOfExistingTransaction = true
+		}
 	}
 
 	if len(cmd.Args) > 2 {
-		return nil, errors.New("command must have at most two arguments - key, transactionId")
+		return nil, errors.New("command must have at most 2 arguments - key, transactionId")
 	}
 
 	return getArgs, nil

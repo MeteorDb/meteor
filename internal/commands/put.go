@@ -11,7 +11,6 @@ func init() {
 	Register("PUT", []ArgSpec{
 			{Name: "key", Type: "string", Required: true, Description: "The key to set"},
 			{Name: "value", Type: "string", Required: true, Description: "The value to set"},
-			{Name: "isPartOfExistingTransaction", Type: "bool", Required: false, Description: "Whether the operation is part of an existing transaction"},
 			{Name: "transactionId", Type: "uint32", Required: false, Description: "The transaction id to put the key and value to"},
 		}, ensurePut, execPut)
 }
@@ -37,36 +36,28 @@ func ensurePut(dm *dbmanager.DBManager, cmd *common.Command) (*PutArgs, error) {
 		transactionId: 0,
 	}
 
-	if argLen >= 3 {
-		isPartOfExistingTransaction, err := strconv.ParseBool(cmd.Args[2])
-		if err != nil {
-			return nil, errors.New("cannot parse isPartOfExistingTransaction")
-		}
-		putArgs.isPartOfExistingTransaction = isPartOfExistingTransaction
-	}
-
-	if !putArgs.isPartOfExistingTransaction && argLen == 3 {
+	// if no transactionId, get a new one
+	if argLen == 2 {
 		putArgs.transactionId = dm.TransactionManager.GetNewTransactionId()
 	}
 
-	if putArgs.isPartOfExistingTransaction && argLen < 4 {
-		return nil, errors.New("command must contain transactionId if already part of a transaction")
-	}
-
-	if !putArgs.isPartOfExistingTransaction && argLen >= 4 {
-		return nil, errors.New("command cannot contain transactionId if not part of a transaction")
-	}
-
-	if putArgs.isPartOfExistingTransaction && argLen == 4 {
-		transactionId64Bits, err := strconv.ParseUint(cmd.Args[3], 10, 32)
+	// if transactionId, check if it is part of an existing transaction
+	if argLen == 3 {
+		transactionId64Bits, err := strconv.ParseUint(cmd.Args[2], 10, 32)
 		if err != nil {
 			return nil, errors.New("invalid transactionId")
 		}
 		putArgs.transactionId = uint32(transactionId64Bits)
+
+		if dm.TransactionManager.IsNewTransactionId(putArgs.transactionId) {
+			return nil, errors.New("transactionId not allowed")
+		} else {
+			putArgs.isPartOfExistingTransaction = true
+		}
 	}
 
-	if argLen > 4 {
-		return nil, errors.New("command must have at most 4 arguments - key, value, isPartOfExistingTransaction, transactionId")
+	if argLen > 3 {
+		return nil, errors.New("command must have at most 3 arguments - key, value, transactionId")
 	}
 
 	return putArgs, nil

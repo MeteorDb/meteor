@@ -5,8 +5,6 @@ import (
 	"meteor/server"
 )
 
-
-
 func main() {
 	config.LoadConfig()
 	server.Init()

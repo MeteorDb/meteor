@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"meteor/internal/common"
+	"meteor/internal/config"
 	"meteor/internal/gsnmanager"
 	"meteor/internal/parser"
 	"meteor/internal/snapshotmanager"
@@ -11,10 +12,6 @@ import (
 	"meteor/internal/transactionmanager"
 	"meteor/internal/walmanager"
 	"slices"
-)
-
-const (
-	USE_WAL = true
 )
 
 type DBManager struct {
@@ -119,7 +116,7 @@ func readWalRows(walManager *walmanager.WalManager, callback func(transactionRow
 }
 
 func (dm *DBManager) AddTransactionToWal(transactionRow *common.TransactionRow) error {
-	if !USE_WAL {
+	if !config.Config.UseWal {
 		return nil
 	}
 	fmt.Printf("%v\n", transactionRow)

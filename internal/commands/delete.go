@@ -10,15 +10,14 @@ import (
 func init() {
 	Register("DELETE", []ArgSpec{
 		{ Name: "key", Type: "string", Required: true, Description: "The key to delete" },
-		{ Name: "isPartOfExistingTransaction", Type: "bool", Required: false, Description: "Whether the operation is part of an existing transaction" },
 		{ Name: "transactionId", Type: "uint32", Required: false, Description: "The transaction id to delete" },
 	}, ensureDelete, execDelete)
 }
 
 type DeleteArgs struct {
 	key string
-	isPartOfExistingTransaction bool
 	transactionId uint32
+	isPartOfExistingTransaction bool
 }
 
 func ensureDelete(dm *dbmanager.DBManager, cmd *common.Command) (*DeleteArgs, error) {
@@ -30,40 +29,32 @@ func ensureDelete(dm *dbmanager.DBManager, cmd *common.Command) (*DeleteArgs, er
 
 	deleteArgs := &DeleteArgs{
 		key: cmd.Args[0],
-		isPartOfExistingTransaction: false,
 		transactionId: 0,
+		isPartOfExistingTransaction: false,
 	}
 
-	if argLen >= 2 {
-		isPartOfExistingTransaction, err := strconv.ParseBool(cmd.Args[1])
-		if err != nil {
-			return nil, errors.New("cannot parse isPartOfExistingTransaction")
-		}
-		deleteArgs.isPartOfExistingTransaction = isPartOfExistingTransaction
-	}
-
-	if !deleteArgs.isPartOfExistingTransaction && argLen == 2 {
+	if argLen == 1 {
 		deleteArgs.transactionId = dm.TransactionManager.GetNewTransactionId()
 	}
 
-	if deleteArgs.isPartOfExistingTransaction && argLen < 3 {
-		return nil, errors.New("command must contain transactionId if already part of a transaction")
-	}
-
-	if !deleteArgs.isPartOfExistingTransaction && argLen >= 3 {
-		return nil, errors.New("command cannot contain transactionId if not part of a transaction")
-	}
-
-	if deleteArgs.isPartOfExistingTransaction && argLen == 3 {
-		transactionId64Bits, err := strconv.ParseUint(cmd.Args[2], 10, 32)
+	if argLen == 2 {
+		transactionId64Bits, err := strconv.ParseUint(cmd.Args[1], 10, 32)
 		if err != nil {
 			return nil, errors.New("invalid transactionId")
 		}
 		deleteArgs.transactionId = uint32(transactionId64Bits)
+		
+		// if new transaction, client not allowed to specify transactionId
+		// it will be assigned by the server
+		if dm.TransactionManager.IsNewTransactionId(deleteArgs.transactionId) {
+			return nil, errors.New("transactionId not allowed")
+		} else {
+			deleteArgs.isPartOfExistingTransaction = true
+		}
 	}
 
-	if argLen > 3 {
-		return nil, errors.New("command must have at most 3 arguments - key, isPartOfExistingTransaction, transactionId")
+	if argLen > 2 {
+		return nil, errors.New("command must have at most 2 arguments - key, transactionId")
 	}
 
 	return deleteArgs, nil

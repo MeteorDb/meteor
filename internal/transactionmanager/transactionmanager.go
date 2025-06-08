@@ -14,6 +14,7 @@ import (
 type TransactionManager struct {
 	transactionStoreMap map[uint32]store.Store
 	connToTransactionIdsMap map[*net.Conn][]uint32
+	txnToIsolationLevelMap map[uint32]string
 	walManager *walmanager.WalManager
 	currentTransactionId atomic.Uint32
 	transactionIdBatchStart uint32
@@ -27,6 +28,7 @@ func NewTransactionManager(walManager *walmanager.WalManager) (*TransactionManag
 		walManager: walManager,
 		transactionStoreMap: make(map[uint32]store.Store),
 		connToTransactionIdsMap: make(map[*net.Conn][]uint32),
+		txnToIsolationLevelMap: make(map[uint32]string),
 		currentTransactionId: atomic.Uint32{},
 		transactionIdBatchStart: transactionIdBatchStart,
 		transactionIdBatchEnd: transactionIdBatchEnd,
@@ -82,7 +84,7 @@ func (tm *TransactionManager) ClearTransactionStore(transactionId uint32) {
 }
 
 func (tm *TransactionManager) isTransactionIdAllowedForConnection(transactionId uint32, conn *net.Conn) bool {
-	isNewTransactionId := tm.isNewTransactionId(transactionId)
+	isNewTransactionId := tm.IsNewTransactionId(transactionId)
 
 	if isNewTransactionId {
 		return true
@@ -95,7 +97,7 @@ func (tm *TransactionManager) isTransactionIdAllowedForConnection(transactionId 
 	return slices.Contains(transactionIds, transactionId)
 }
 
-func (tm *TransactionManager) isNewTransactionId(transactionId uint32) bool {
+func (tm *TransactionManager) IsNewTransactionId(transactionId uint32) bool {
 	for tId := range tm.transactionStoreMap {
 		if tId == transactionId {
 			return false
@@ -134,4 +136,22 @@ func (tm *TransactionManager) GetStoreByTransactionId(transactionId uint32, conn
 		return nil, nil
 	}
 	return store, nil
+}
+
+func (tm *TransactionManager) EnsureIsolationLevel(transactionId uint32, isolationLevel string) error {
+	txnIsolationLevel, ok := tm.txnToIsolationLevelMap[transactionId]
+	if !ok {
+		tm.txnToIsolationLevelMap[transactionId] = isolationLevel
+	} else if txnIsolationLevel != isolationLevel {
+		return errors.New("transaction isolation level mismatch: " + txnIsolationLevel + " != " + isolationLevel)
+	}
+	return nil
+}
+
+func (tm *TransactionManager) GetIsolationLevel(transactionId uint32) (string, error) {
+	txnIsolationLevel, ok := tm.txnToIsolationLevelMap[transactionId]
+	if !ok {
+		return "", errors.New("transaction isolation level not found")
+	}
+	return txnIsolationLevel, nil
 }

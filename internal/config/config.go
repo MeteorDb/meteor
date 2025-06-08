@@ -11,6 +11,7 @@ type MeteorDbConfig struct {
 	Host     string `mapstructure:"host" default:"0.0.0.0" description:"the sql host address"`
 	Port     string `mapstructure:"port" default:"7653" description:"the sql read port"`
 	LogLevel string `mapstructure:"logLevel" default:"info" description:"Log Level"`
+	UseWal   bool   `mapstructure:"useWal" default:"true" description:"Whether to use write ahead log"`
 }
 
 var Config *MeteorDbConfig
