@@ -59,14 +59,12 @@ func (tm *TransactionManager) AddTransaction(transactionRow *common.TransactionR
 
 	tm.registerTransactionForConnection(transactionRow.TransactionId, conn)
 	
-	if slices.Contains([]string{common.DB_OP_PUT, common.DB_OP_DELETE}, transactionRow.Operation) {
-		transactionStore, ok := tm.transactionStoreMap[transactionRow.TransactionId]
-		if !ok {
-			transactionStore = store.NewBufferStore()
-			tm.transactionStoreMap[transactionRow.TransactionId] = transactionStore
-		}
-		transactionStore.Put(transactionRow.Payload.Key, transactionRow.Payload.NewValue)
+	transactionStore, ok := tm.transactionStoreMap[transactionRow.TransactionId]
+	if !ok {
+		transactionStore = store.NewBufferStore()
+		tm.transactionStoreMap[transactionRow.TransactionId] = transactionStore
 	}
+	transactionStore.Put(transactionRow.Payload.Key, transactionRow.Payload.NewValue)
 
 	return nil
 }
@@ -151,7 +149,9 @@ func (tm *TransactionManager) EnsureIsolationLevel(transactionId uint32, isolati
 func (tm *TransactionManager) GetIsolationLevel(transactionId uint32) (string, error) {
 	txnIsolationLevel, ok := tm.txnToIsolationLevelMap[transactionId]
 	if !ok {
-		return "", errors.New("transaction isolation level not found")
+		// if not found, default to READ_COMMITTED
+		tm.txnToIsolationLevelMap[transactionId] = common.TXN_ISOLATION_READ_COMMITTED
+		return common.TXN_ISOLATION_READ_COMMITTED, nil
 	}
 	return txnIsolationLevel, nil
 }

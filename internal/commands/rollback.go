@@ -34,6 +34,11 @@ func ensureRollback(dm *dbmanager.DBManager, cmd *common.Command) (*RollbackArgs
 func execRollback(dm *dbmanager.DBManager, rollbackArgs *RollbackArgs, ctx *CommandContext) ([]byte, error) {
 	transactionId := rollbackArgs.transactionId
 
+	transactionStore := dm.TransactionManager.GetTransactionStore(transactionId)
+	if transactionStore == nil {
+		return nil, errors.New("transaction not found")
+	}
+
 	gsn := dm.GsnManager.GetNewGsn()
 	key := &common.K{Key: common.TypeKeyNull, Gsn: gsn}
 

@@ -9,15 +9,15 @@ import (
 
 func init() {
 	Register("GET", []ArgSpec{
-		{ Name: "key", Type: "string", Required: true, Description: "The key to get" },
-		{ Name: "transactionId", Type: "uint32", Required: false, Description: "The transaction id to get the key from" },
+		{Name: "key", Type: "string", Required: true, Description: "The key to get"},
+		{Name: "transactionId", Type: "uint32", Required: false, Description: "The transaction id to get the key from"},
 	}, ensureGet, execGet)
 }
 
 type GetArgs struct {
-	key string
+	key                         string
 	isPartOfExistingTransaction bool
-	transactionId uint32
+	transactionId               uint32
 }
 
 func ensureGet(dm *dbmanager.DBManager, cmd *common.Command) (*GetArgs, error) {
@@ -26,9 +26,9 @@ func ensureGet(dm *dbmanager.DBManager, cmd *common.Command) (*GetArgs, error) {
 	}
 
 	getArgs := &GetArgs{
-		key: cmd.Args[0],
+		key:                         cmd.Args[0],
 		isPartOfExistingTransaction: false,
-		transactionId: 0,
+		transactionId:               0,
 	}
 
 	if len(cmd.Args) == 1 {
@@ -58,33 +58,57 @@ func ensureGet(dm *dbmanager.DBManager, cmd *common.Command) (*GetArgs, error) {
 
 func execGet(dm *dbmanager.DBManager, getArgs *GetArgs, ctx *CommandContext) ([]byte, error) {
 	key := getArgs.key
-	isPartOfExistingTransaction := getArgs.isPartOfExistingTransaction
 	transactionId := getArgs.transactionId
+	isolationLevel, err := dm.TransactionManager.GetIsolationLevel(transactionId)
+	if err != nil {
+		return nil, err
+	}
 
-	if isPartOfExistingTransaction {
-		// if part of existing transaction, then search the transaction store first
-		store, err := dm.TransactionManager.GetStoreByTransactionId(transactionId, ctx.clientConnection)
+	// search the transaction store first
+	store, err := dm.TransactionManager.GetStoreByTransactionId(transactionId, ctx.clientConnection)
+	if err != nil {
+		return nil, err
+	}
+
+	if store != nil {
+		v := store.Get(key)
+		if v != nil {
+			if v.Type == common.TypeTombstone {
+				return []byte("-2"), nil
+			}
+			return v.Value, nil
+		}
+	}
+
+	// Not found in transaction store, so fetch from buffer store
+	v := dm.StoreManager.BufferStore.Get(key)
+
+	var valueToStore *common.V // required for REPEATABLE_READ
+	var valueToReturn []byte
+
+	switch {
+	case v == nil:
+		// Not found
+		valueToStore = nil
+		valueToReturn = []byte("-1")
+	case v.Type == common.TypeTombstone:
+		valueToStore = &common.V{Type: common.TypeTombstone, Value: nil}
+		valueToReturn = []byte("-2")
+	default:
+		valueToStore = v
+		valueToReturn = v.Value
+	}
+
+	if isolationLevel == common.TXN_ISOLATION_REPEATABLE_READ {
+		gsn, _ := dm.StoreManager.BufferStore.GetLatestGsn(key)
+		keyObj := &common.K{Key: key, Gsn: gsn}
+		transactionRow := common.NewTransactionRow(transactionId, common.DB_OP_GET, common.TRANSACTION_STATE_QUEUED, keyObj, nil, valueToStore)
+		err := dm.TransactionManager.AddTransaction(transactionRow, ctx.clientConnection)
 		if err != nil {
 			return nil, err
 		}
-
-		if store != nil {
-			v := store.Get(key)
-			if v != nil {
-				return v.Value, nil
-			}
-		}
+		_ = dm.AddTransactionToWal(transactionRow) // Optional
 	}
 
-	v := dm.StoreManager.BufferStore.Get(key)
-
-	if v == nil {
-		return []byte("-1"), nil
-	}
-
-	if v.Type == common.TypeTombstone {
-		return []byte("-2"), nil
-	}
-
-	return v.Value, nil
+	return valueToReturn, nil
 }

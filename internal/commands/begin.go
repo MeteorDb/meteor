@@ -3,7 +3,6 @@ package commands
 import (
 	"errors"
 	"meteor/internal/common"
-	"meteor/internal/config"
 	"meteor/internal/dbmanager"
 	"strconv"
 )
@@ -26,12 +25,12 @@ func ensureBegin(dm *dbmanager.DBManager, cmd *common.Command) (*BeginArgs, erro
 	}
 
 	beginArgs := &BeginArgs{
-		transactionIsolation: config.TXN_ISOLATION_READ_COMMITTED,
+		transactionIsolation: common.TXN_ISOLATION_READ_COMMITTED,
 	}
 
 	if argLen == 1 {
 		transactionIsolation := cmd.Args[0]
-		if transactionIsolation != config.TXN_ISOLATION_READ_COMMITTED && transactionIsolation != config.TXN_ISOLATION_REPEATABLE_READ && transactionIsolation != config.TXN_ISOLATION_SERIALIZABLE {
+		if transactionIsolation != common.TXN_ISOLATION_READ_COMMITTED && transactionIsolation != common.TXN_ISOLATION_REPEATABLE_READ && transactionIsolation != common.TXN_ISOLATION_SERIALIZABLE {
 			return nil, errors.New("invalid transaction isolation level")
 		}
 		beginArgs.transactionIsolation = transactionIsolation
