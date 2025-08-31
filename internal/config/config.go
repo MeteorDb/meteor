@@ -22,6 +22,12 @@ func LoadConfig() {
 	viper.SetConfigType("json")
 	viper.AddConfigPath(configPath)
 
+	// Set default values
+	viper.SetDefault("host", "0.0.0.0")
+	viper.SetDefault("port", "7653")
+	viper.SetDefault("logLevel", "info")
+	viper.SetDefault("useWal", true)
+
 	if err := viper.ReadInConfig(); err != nil {
 		slog.Error("Failed to read config")
 		panic(err)

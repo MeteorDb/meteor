@@ -50,6 +50,7 @@ func (m *MapDataTable) Put(key *common.K, value *common.V) error {
 	return nil
 }
 
+// TODO: Since this is not used, it should be removed from the interface, all implementations and usages.
 func (m *MapDataTable) Delete(key string) error {
 	// We don't need to delete the key from the table, because we put a tombstone in the value in the above layer
 	return nil
@@ -94,4 +95,34 @@ func (m *MapDataTable) GetLatestGsn(key string) (uint32, error) {
 		}
 	}
 	return maxGsn, nil
+}
+
+// GetVersionAtOrBeforeGsn returns the latest version of a key that was created at or before the specified GSN. Required for SNAPSHOT_ISOLATION.
+func (m *MapDataTable) GetVersionAtOrBeforeGsn(key string, maxGsn uint32) *common.V {
+	m.m.RLock()
+	defer m.m.RUnlock()
+
+	gsnMap, ok := m.table[key]
+	if !ok {
+		return nil
+	}
+
+	// Find the highest GSN that is <= maxGsn
+	var bestGsn uint32
+	var found bool
+
+	for gsn := range gsnMap {
+		if gsn <= maxGsn {
+			if !found || gsn > bestGsn {
+				bestGsn = gsn
+				found = true
+			}
+		}
+	}
+
+	if !found {
+		return nil
+	}
+
+	return gsnMap[bestGsn]
 }

@@ -47,24 +47,73 @@ func execCommit(dm *dbmanager.DBManager, commitArgs *CommitArgs, ctx *CommandCon
 
 	err := dm.TransactionManager.AddTransaction(transactionRow, ctx.clientConnection)
 	if err != nil {
+		dm.TransactionManager.ClearTransactionStore(transactionId)
 		return nil, err
 	}
 
 	err = dm.AddTransactionToWal(transactionRow)
 	if err != nil {
+		dm.TransactionManager.ClearTransactionStore(transactionId)
 		return nil, err
 	}
 
-	for _, key := range transactionStore.Keys() {
-		latestGsn, err := transactionStore.GetLatestGsn(key)
+	// Apply changes from transaction store to buffer store with conflict detection
+	for _, keyStr := range transactionStore.Keys() {
+		value := transactionStore.Get(keyStr)
+		if value == nil {
+			continue
+		}
+
+		// Skip GET operations - they shouldn't be applied to buffer store
+		// GET operations are identified by having no changes to commit
+		// We can determine this by checking if the value is the same as buffer store
+		// TODO: Should be a better way to handle this
+		bufferValue := dm.StoreManager.BufferStore.Get(keyStr)
+		if bufferValue != nil && value.Type == bufferValue.Type && 
+		   string(value.Value) == string(bufferValue.Value) {
+			continue // This is likely a GET operation, skip
+		}
+
+		latestGsn, err := transactionStore.GetLatestGsn(keyStr)
 		if err != nil {
+			dm.TransactionManager.ClearTransactionStore(transactionId)
 			return nil, err
 		}
-		// TODO: should only consider PUT/DELETE rows and not GET rows
-		// TODO: compare bufferStore latestGsn of the key with the latestGsn of the transactionStore, if the bufferStore latestGsn is greater than the transactionStore latestGsn, then throw error
-		dm.StoreManager.BufferStore.Put(&common.K{Key: key, Gsn: latestGsn}, transactionStore.Get(key))
+
+		// Compare buffer store latest GSN with transaction store GSN
+		// If buffer store has newer version, detect conflict
+		// TODO: We can reuse the bufferValue from above since it returns the value with latest GSN. Refer mapdatatable.go for implementation.
+		bufferLatestGsn, bufferErr := dm.StoreManager.BufferStore.GetLatestGsn(keyStr)
+		if bufferErr != nil {
+			dm.TransactionManager.ClearTransactionStore(transactionId)
+			return nil, bufferErr
+		}
+		// TODO: Ideally this check should be moved to ValidateWrite method. Currently similar check is present in ValidateWrite method but only for SNAPSHOT_ISOLATION. But ValidateWrite is used in other places so need to be careful.
+		if bufferLatestGsn > latestGsn {
+			// Another transaction has committed after this transaction read the value
+			// Clean up and return error
+			dm.TransactionManager.ClearTransactionStore(transactionId)
+			return nil, errors.New("write-write conflict detected - another transaction committed first for key: " + keyStr)
+		}
+
+		// Final validation based on isolation level
+		err = dm.TransactionManager.ValidateWrite(transactionId, keyStr, dm.StoreManager.BufferStore, ctx.clientConnection)
+		if err != nil {
+			// Clean up and return error
+			dm.TransactionManager.ClearTransactionStore(transactionId)
+			return nil, err
+		}
+
+		// Apply the change to buffer store
+		err = dm.StoreManager.BufferStore.Put(&common.K{Key: keyStr, Gsn: latestGsn}, value)
+		if err != nil {
+			// Clean up and return error
+			dm.TransactionManager.ClearTransactionStore(transactionId)
+			return nil, err
+		}
 	}
 
+	// Clean up transaction resources (this includes lock cleanup)
 	dm.TransactionManager.ClearTransactionStore(transactionId)
 
 	return []byte("OK"), nil

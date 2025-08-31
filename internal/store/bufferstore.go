@@ -71,3 +71,8 @@ func (s *BufferStore) GetLatestGsn(key string) (uint32, error) {
 	shardIndex := common.HashKey(key) % NUMBER_OF_SHARDS
 	return s.tableShards[shardIndex].GetLatestGsn(key)
 }
+
+func (s *BufferStore) GetVersionAtOrBeforeGsn(key string, maxGsn uint32) *common.V {
+	shardIndex := common.HashKey(key) % NUMBER_OF_SHARDS
+	return s.tableShards[shardIndex].GetVersionAtOrBeforeGsn(key, maxGsn)
+}

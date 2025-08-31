@@ -46,11 +46,13 @@ func execRollback(dm *dbmanager.DBManager, rollbackArgs *RollbackArgs, ctx *Comm
 
 	err := dm.TransactionManager.AddTransaction(transactionRow, ctx.clientConnection)
 	if err != nil {
+		dm.TransactionManager.ClearTransactionStore(transactionId)
 		return nil, err
 	}
 	
 	err = dm.AddTransactionToWal(transactionRow)
 	if err != nil {
+		dm.TransactionManager.ClearTransactionStore(transactionId)
 		return nil, err
 	}
 

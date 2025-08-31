@@ -34,3 +34,18 @@ func (s *ImmutableStore) Size() (int, error) {
 func (s *ImmutableStore) Reset() error {
 	return s.table.Clear()
 }
+
+// Keys returns all keys in the immutable store
+func (s *ImmutableStore) Keys() []string {
+	return s.table.Keys()
+}
+
+// GetLatestGsn returns the latest GSN for a key in the immutable store
+func (s *ImmutableStore) GetLatestGsn(key string) (uint32, error) {
+	return s.table.GetLatestGsn(key)
+}
+
+// GetVersionAtOrBeforeGsn returns the latest version of a key that was created at or before the specified GSN
+func (s *ImmutableStore) GetVersionAtOrBeforeGsn(key string, maxGsn uint32) *common.V {
+	return s.table.GetVersionAtOrBeforeGsn(key, maxGsn)
+}

@@ -64,15 +64,38 @@ func execDelete(dm *dbmanager.DBManager, deleteArgs *DeleteArgs, ctx *CommandCon
 	key := deleteArgs.key
 	isPartOfExistingTransaction := deleteArgs.isPartOfExistingTransaction
 	transactionId := deleteArgs.transactionId
+
+	isolationLevel, err := dm.TransactionManager.GetIsolationLevel(transactionId)
+	if err != nil {
+		return nil, err
+	}
+
+	// Acquire write lock. But this lock is not released immediately for non-transactional operations since lock should be released only after commit or rollback.
+	err = dm.TransactionManager.AcquireWriteLock(transactionId, key, isolationLevel)
+	if err != nil {
+		dm.TransactionManager.ClearTransactionStore(transactionId)
+		return nil, err
+	}
 	
 	gsn := dm.GsnManager.GetNewGsn()
 
 	keyObj := &common.K{Key: key, Gsn: gsn}
 
-	// BUG: this is not correct
-	// If existing transaction, the old value should be from transaction store if exists, else buffer store
-	oldValue := dm.StoreManager.BufferStore.Get(key)
+	// Get old value using the correct read order (transaction store first, then buffer store)
+	oldValue, err := dm.TransactionManager.ReadValue(transactionId, key, dm.StoreManager.BufferStore, ctx.clientConnection)
+	if err != nil {
+		dm.TransactionManager.ClearTransactionStore(transactionId)
+		return nil, err
+	}
+
 	tombstone := &common.V{Type: common.TypeTombstone, Value: nil}
+
+	// Validate write based on isolation level
+	err = dm.TransactionManager.ValidateWrite(transactionId, key, dm.StoreManager.BufferStore, ctx.clientConnection)
+	if err != nil {
+		dm.TransactionManager.ClearTransactionStore(transactionId)
+		return nil, err
+	}
 
 	// if not part of existing transaction, commit immediately as single operation
 	transactionState := common.TRANSACTION_STATE_COMMIT
@@ -85,13 +108,15 @@ func execDelete(dm *dbmanager.DBManager, deleteArgs *DeleteArgs, ctx *CommandCon
 	transactionRow := common.NewTransactionRow(transactionId, common.DB_OP_DELETE, transactionState, keyObj, oldValue, tombstone)
 
 	// the operation is stored in transaction store (queued)
-	err := dm.TransactionManager.AddTransaction(transactionRow, ctx.clientConnection)
+	err = dm.TransactionManager.AddTransaction(transactionRow, ctx.clientConnection)
 	if err != nil {
+		dm.TransactionManager.ClearTransactionStore(transactionId)
 		return nil, err
 	}
 
 	err = dm.AddTransactionToWal(transactionRow)
 	if err != nil {
+		dm.TransactionManager.ClearTransactionStore(transactionId)
 		return nil, err
 	}
 
@@ -99,8 +124,13 @@ func execDelete(dm *dbmanager.DBManager, deleteArgs *DeleteArgs, ctx *CommandCon
 	if !isPartOfExistingTransaction {
 		err = dm.StoreManager.PutTxnRowToBufferStore(transactionRow)
 		if err != nil {
+			dm.TransactionManager.ClearTransactionStore(transactionId)
 			return nil, err
 		}
+		
+		// Release locks immediately for non-transactional operations
+		dm.TransactionManager.ClearTransactionStore(transactionId)
+		
 		return []byte("OK"), nil
 	}
 

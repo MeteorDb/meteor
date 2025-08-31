@@ -30,8 +30,23 @@ func ensureBegin(dm *dbmanager.DBManager, cmd *common.Command) (*BeginArgs, erro
 
 	if argLen == 1 {
 		transactionIsolation := cmd.Args[0]
-		if transactionIsolation != common.TXN_ISOLATION_READ_COMMITTED && transactionIsolation != common.TXN_ISOLATION_REPEATABLE_READ && transactionIsolation != common.TXN_ISOLATION_SERIALIZABLE {
-			return nil, errors.New("invalid transaction isolation level")
+		validIsolationLevels := []string{
+			common.TXN_ISOLATION_READ_COMMITTED,
+			common.TXN_ISOLATION_REPEATABLE_READ,
+			common.TXN_ISOLATION_SNAPSHOT_ISOLATION,
+			common.TXN_ISOLATION_SERIALIZABLE,
+		}
+		
+		isValid := false
+		for _, level := range validIsolationLevels {
+			if transactionIsolation == level {
+				isValid = true
+				break
+			}
+		}
+		
+		if !isValid {
+			return nil, errors.New("invalid transaction isolation level. Valid levels are: READ_COMMITTED, REPEATABLE_READ, SNAPSHOT_ISOLATION, SERIALIZABLE")
 		}
 		beginArgs.transactionIsolation = transactionIsolation
 	}
@@ -46,19 +61,27 @@ func execBegin(dm *dbmanager.DBManager, beginArgs *BeginArgs, ctx *CommandContex
 	if err != nil {
 		return nil, err
 	}
-	
+
 	gsn := dm.GsnManager.GetNewGsn()
+	
+	// Set transaction start GSN
+	// Required only for SNAPSHOT_ISOLATION
+	if beginArgs.transactionIsolation == common.TXN_ISOLATION_SNAPSHOT_ISOLATION {
+		dm.TransactionManager.SetTransactionStartGsn(transactionId, gsn)
+	}
 	key := &common.K{Key: common.TypeKeyNull, Gsn: gsn}
 
 	transactionRow := common.NewTransactionRow(transactionId, common.DB_OP_BEGIN, common.TRANSACTION_STATE_QUEUED, key, nil, nil)
 
 	err = dm.TransactionManager.AddTransaction(transactionRow, ctx.clientConnection)
 	if err != nil {
+		dm.TransactionManager.ClearTransactionStore(transactionId)
 		return nil, err
 	}
 
 	err = dm.AddTransactionToWal(transactionRow)
 	if err != nil {
+		dm.TransactionManager.ClearTransactionStore(transactionId)
 		return nil, err
 	}
 

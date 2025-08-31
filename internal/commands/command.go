@@ -2,6 +2,7 @@ package commands
 
 import (
 	"log"
+	"log/slog"
 	"net"
 	"strings"
 	"time"
@@ -55,22 +56,22 @@ func Register[I any](
     }
 
     handler := func(dm *dbmanager.DBManager, cmd *common.Command) ([]byte, error) {
-        log.Printf("[CMD][%s] validating %v", name, cmd.Args)
+        slog.Info("validating", "command", name, "args", cmd.Args)
         in, err := ensureInputs(dm, cmd)
         if err != nil {
-            log.Printf("[CMD][%s] validation failed: %v", name, err)
+            slog.Error("validation failed", "command", name, "error", err)
             return nil, err
         }
 
-        log.Printf("[CMD][%s] START executing %v", name, cmd.Args)
+        slog.Info("executing", "command", name, "args", cmd.Args)
         t0 := time.Now()
         res, err := execute(dm, in, &CommandContext{clientConnection: cmd.Connection})
         dt := time.Since(t0)
 
         if err != nil {
-            log.Printf("[CMD][%s] ERROR after %v: %v", name, dt, err)
+            slog.Error("error", "command", name, "duration", dt, "error", err)
         } else {
-            log.Printf("[CMD][%s] DONE in %v", name, dt)
+            slog.Info("done", "command", name, "duration", dt)
         }
         return res, err
     }

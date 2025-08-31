@@ -69,6 +69,18 @@ func execPut(dm *dbmanager.DBManager, putArgs *PutArgs, ctx *CommandContext) ([]
 	isPartOfExistingTransaction := putArgs.isPartOfExistingTransaction
 	transactionId := putArgs.transactionId
 
+	isolationLevel, err := dm.TransactionManager.GetIsolationLevel(transactionId)
+	if err != nil {
+		return nil, err
+	}
+
+	// Acquire write lock. But this lock is not released immediately for non-transactional operations since lock should be released only after commit or rollback.
+	err = dm.TransactionManager.AcquireWriteLock(transactionId, key, isolationLevel)
+	if err != nil {
+		dm.TransactionManager.ClearTransactionStore(transactionId)
+		return nil, err
+	}
+
 	var valueType common.DataType = common.TypeString
 
 	gsn := dm.GsnManager.GetNewGsn()
@@ -76,7 +88,21 @@ func execPut(dm *dbmanager.DBManager, putArgs *PutArgs, ctx *CommandContext) ([]
 	keyObj := &common.K{Key: key, Gsn: gsn}
 	valueObj := &common.V{Type: valueType, Value: value}
 
-	oldValue := dm.StoreManager.BufferStore.Get(key)
+	// Get old value using the correct read order (transaction store first, then buffer store)
+	var oldValue *common.V
+	// Use ReadValue to get the proper old value considering isolation level
+	oldValue, err = dm.TransactionManager.ReadValue(transactionId, key, dm.StoreManager.BufferStore, ctx.clientConnection)
+	if err != nil {
+		dm.TransactionManager.ClearTransactionStore(transactionId)
+		return nil, err
+	}
+
+	// Validate write based on isolation level
+	err = dm.TransactionManager.ValidateWrite(transactionId, key, dm.StoreManager.BufferStore, ctx.clientConnection)
+	if err != nil {
+		dm.TransactionManager.ClearTransactionStore(transactionId)
+		return nil, err
+	}
 
 	// if not part of existing transaction, commit immediately as single operation
 	transactionState := common.TRANSACTION_STATE_COMMIT
@@ -89,13 +115,15 @@ func execPut(dm *dbmanager.DBManager, putArgs *PutArgs, ctx *CommandContext) ([]
 	transactionRow := common.NewTransactionRow(transactionId, common.DB_OP_PUT, transactionState, keyObj, oldValue, valueObj)
 
 	// the operation is stored in transaction store (queued)
-	err := dm.TransactionManager.AddTransaction(transactionRow, ctx.clientConnection)
+	err = dm.TransactionManager.AddTransaction(transactionRow, ctx.clientConnection)
 	if err != nil {
+		dm.TransactionManager.ClearTransactionStore(transactionId)
 		return nil, err
 	}
 
 	err = dm.AddTransactionToWal(transactionRow)
 	if err != nil {
+		dm.TransactionManager.ClearTransactionStore(transactionId)
 		return nil, err
 	}
 
@@ -103,8 +131,13 @@ func execPut(dm *dbmanager.DBManager, putArgs *PutArgs, ctx *CommandContext) ([]
 	if !isPartOfExistingTransaction {
 		err = dm.StoreManager.PutTxnRowToBufferStore(transactionRow)
 		if err != nil {
+			dm.TransactionManager.ClearTransactionStore(transactionId)
 			return nil, err
 		}
+		
+		// Release locks immediately for non-transactional operations
+		dm.TransactionManager.ClearTransactionStore(transactionId)
+		
 		return []byte("OK"), nil
 	}
 

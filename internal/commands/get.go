@@ -64,26 +64,26 @@ func execGet(dm *dbmanager.DBManager, getArgs *GetArgs, ctx *CommandContext) ([]
 		return nil, err
 	}
 
-	// search the transaction store first
-	store, err := dm.TransactionManager.GetStoreByTransactionId(transactionId, ctx.clientConnection)
+	// Acquire read lock based on isolation level
+	err = dm.TransactionManager.AcquireReadLock(transactionId, key, isolationLevel)
 	if err != nil {
+		dm.TransactionManager.ClearTransactionStore(transactionId)
 		return nil, err
 	}
 
-	if store != nil {
-		v := store.Get(key)
-		if v != nil {
-			if v.Type == common.TypeTombstone {
-				return []byte("-2"), nil
-			}
-			return v.Value, nil
-		}
+	// Release read lock immediately for READ_COMMITTED
+	defer func() {
+		_ = dm.TransactionManager.ReleaseReadLock(transactionId, key, isolationLevel)
+	}()
+
+	// Read value using the consolidated ReadValue method that handles the proper read order
+	v, err := dm.TransactionManager.ReadValue(transactionId, key, dm.StoreManager.BufferStore, ctx.clientConnection)
+	if err != nil {
+		dm.TransactionManager.ClearTransactionStore(transactionId)
+		return nil, err
 	}
 
-	// Not found in transaction store, so fetch from buffer store
-	v := dm.StoreManager.BufferStore.Get(key)
-
-	var valueToStore *common.V // required for REPEATABLE_READ
+	var valueToStore *common.V
 	var valueToReturn []byte
 
 	switch {
@@ -99,12 +99,16 @@ func execGet(dm *dbmanager.DBManager, getArgs *GetArgs, ctx *CommandContext) ([]
 		valueToReturn = v.Value
 	}
 
-	if isolationLevel == common.TXN_ISOLATION_REPEATABLE_READ {
+	// Store read value in transaction store for REPEATABLE_READ and SNAPSHOT_ISOLATION
+	// So following GET queries return the same value as the first get query even if the value is changed by other transactions
+	if isolationLevel == common.TXN_ISOLATION_REPEATABLE_READ || 
+	   isolationLevel == common.TXN_ISOLATION_SNAPSHOT_ISOLATION {
 		gsn, _ := dm.StoreManager.BufferStore.GetLatestGsn(key)
 		keyObj := &common.K{Key: key, Gsn: gsn}
 		transactionRow := common.NewTransactionRow(transactionId, common.DB_OP_GET, common.TRANSACTION_STATE_QUEUED, keyObj, nil, valueToStore)
 		err := dm.TransactionManager.AddTransaction(transactionRow, ctx.clientConnection)
 		if err != nil {
+			dm.TransactionManager.ClearTransactionStore(transactionId)
 			return nil, err
 		}
 		_ = dm.AddTransactionToWal(transactionRow) // Optional
