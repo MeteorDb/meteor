@@ -126,3 +126,80 @@ func (m *MapDataTable) GetVersionAtOrBeforeGsn(key string, maxGsn uint32) *commo
 
 	return gsnMap[bestGsn]
 }
+
+func (m *MapDataTable) ScanPrefix(prefix string) map[string]*common.V {
+	m.m.RLock()
+	defer m.m.RUnlock()
+	
+	result := make(map[string]*common.V)
+	for key := range m.table {
+		if len(key) >= len(prefix) && key[:len(prefix)] == prefix {
+			if value := m.getLatestValue(key); value != nil {
+				result[key] = value
+			}
+		}
+	}
+	return result
+}
+
+func (m *MapDataTable) ScanRange(startKey, endKey string) map[string]*common.V {
+	m.m.RLock()
+	defer m.m.RUnlock()
+	
+	result := make(map[string]*common.V)
+	for key := range m.table {
+		if key >= startKey && key <= endKey {
+			if value := m.getLatestValue(key); value != nil {
+				result[key] = value
+			}
+		}
+	}
+	return result
+}
+
+func (m *MapDataTable) ScanWithFilter(filterFunc func(string, *common.V) bool) map[string]*common.V {
+	m.m.RLock()
+	defer m.m.RUnlock()
+	
+	result := make(map[string]*common.V)
+	for key := range m.table {
+		if value := m.getLatestValue(key); value != nil {
+			if filterFunc(key, value) {
+				result[key] = value
+			}
+		}
+	}
+	return result
+}
+
+func (m *MapDataTable) CountWithFilter(filterFunc func(string, *common.V) bool) int {
+	m.m.RLock()
+	defer m.m.RUnlock()
+	
+	count := 0
+	for key := range m.table {
+		if value := m.getLatestValue(key); value != nil {
+			if filterFunc(key, value) {
+				count++
+			}
+		}
+	}
+	return count
+}
+
+// getLatestValue is a helper method to get the latest value for a key (assumes lock is held)
+func (m *MapDataTable) getLatestValue(key string) *common.V {
+	gsnMap, ok := m.table[key]
+	if !ok {
+		return nil
+	}
+	
+	var maxGsn uint32
+	for gsn := range gsnMap {
+		if gsn > maxGsn {
+			maxGsn = gsn
+		}
+	}
+	
+	return gsnMap[maxGsn]
+}

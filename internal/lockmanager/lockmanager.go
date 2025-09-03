@@ -13,6 +13,8 @@ type LockType int
 const (
 	ReadLock LockType = iota
 	WriteLock
+	RangeLock      // for locking key ranges (e.g., keys from "user_000" to "user_999")
+	PredicateLock  // for locking based on query conditions (e.g., WHERE age > 25)
 )
 
 func (lt LockType) String() string {
@@ -21,6 +23,10 @@ func (lt LockType) String() string {
 		return "READ"
 	case WriteLock:
 		return "WRITE"
+	case RangeLock:
+		return "RANGE"
+	case PredicateLock:
+		return "PREDICATE"
 	default:
 		return "UNKNOWN"
 	}
@@ -29,9 +35,14 @@ func (lt LockType) String() string {
 // Lock represents a single lock held by a transaction
 type Lock struct {
 	TransactionID uint32
-	Key           string
+	Key           string  // For point locks, the specific key. For range/gap/predicate locks, this might be empty or used as an identifier
 	Type          LockType
 	AcquiredAt    time.Time
+	
+	// Fields for range locks
+	StartKey    string // for range locks, the starting key of the range
+	EndKey      string // for range locks, the ending key of the range
+	Predicate   string // for predicate locks, the condition being locked
 }
 
 // LockRequest represents a request for acquiring a lock
@@ -40,6 +51,11 @@ type LockRequest struct {
 	Key           string
 	Type          LockType
 	AcquiredCh    chan error
+	
+	// Fields for range and predicate lock requests
+	StartKey    string
+	EndKey      string
+	Predicate   string
 }
 
 // LockManager manages locks for transactions
@@ -109,26 +125,6 @@ func (lm *LockManager) AcquireLock(transactionID uint32, key string, lockType Lo
 		lm.removeWaitingRequest(transactionID, key)
 		return fmt.Errorf("lock acquisition timeout for transaction %d on key %s", transactionID, key)
 	}
-}
-
-// TryAcquireLock attempts to acquire a lock without blocking
-func (lm *LockManager) TryAcquireLock(transactionID uint32, key string, lockType LockType) error {
-	lm.mutex.Lock()
-	defer lm.mutex.Unlock()
-
-	if !lm.canGrantLock(key, lockType, transactionID) {
-		return fmt.Errorf("lock not available for transaction %d on key %s", transactionID, key)
-	}
-
-	lock := &Lock{
-		TransactionID: transactionID,
-		Key:           key,
-		Type:          lockType,
-		AcquiredAt:    time.Now(),
-	}
-
-	lm.grantLock(lock)
-	return nil
 }
 
 // ReleaseLock releases a specific lock
@@ -375,4 +371,159 @@ func (lm *LockManager) GetLockStatistics() map[string]any {
 	stats["waiting_requests"] = totalWaiting
 
 	return stats
+}
+
+// AcquireRangeLock acquires a range lock for [startKey, endKey]
+func (lm *LockManager) AcquireRangeLock(transactionID uint32, startKey, endKey string, timeout time.Duration) error {
+	lm.mutex.Lock()
+	
+	// Check if range lock can be granted immediately
+	if lm.canGrantRangeLock(startKey, endKey, transactionID) {
+		lock := &Lock{
+			TransactionID: transactionID,
+			Key:           fmt.Sprintf("range:%s:%s", startKey, endKey),
+			Type:          RangeLock,
+			AcquiredAt:    time.Now(),
+			StartKey:      startKey,
+			EndKey:        endKey,
+		}
+		
+		lm.grantRangeLock(lock)
+		lm.mutex.Unlock()
+		return nil
+	}
+	
+	// Check for deadlock before adding to waiting queue
+	if lm.wouldCauseDeadlock(transactionID, fmt.Sprintf("range:%s:%s", startKey, endKey)) {
+		lm.mutex.Unlock()
+		return errors.New("deadlock detected")
+	}
+	
+	// Add to waiting queue
+	request := &LockRequest{
+		TransactionID: transactionID,
+		Key:           fmt.Sprintf("range:%s:%s", startKey, endKey),
+		Type:          RangeLock,
+		StartKey:      startKey,
+		EndKey:        endKey,
+		AcquiredCh:    make(chan error, 1),
+	}
+	
+	lm.waitingRequests[request.Key] = append(lm.waitingRequests[request.Key], request)
+	lm.mutex.Unlock()
+	
+	// Wait for lock to be granted or timeout
+	select {
+	case err := <-request.AcquiredCh:
+		return err
+	case <-time.After(timeout):
+		lm.removeWaitingRequest(transactionID, request.Key)
+		return fmt.Errorf("range lock acquisition timeout for transaction %d on range [%s, %s]", transactionID, startKey, endKey)
+	}
+}
+
+// AcquirePredicateLock acquires a predicate lock for a condition
+func (lm *LockManager) AcquirePredicateLock(transactionID uint32, predicate string, timeout time.Duration) error {
+	lm.mutex.Lock()
+	
+	// Check if predicate lock can be granted immediately
+	if lm.canGrantPredicateLock(predicate, transactionID) {
+		lock := &Lock{
+			TransactionID: transactionID,
+			Key:           fmt.Sprintf("predicate:%s", predicate),
+			Type:          PredicateLock,
+			AcquiredAt:    time.Now(),
+			Predicate:     predicate,
+		}
+		
+		lm.grantPredicateLock(lock)
+		lm.mutex.Unlock()
+		return nil
+	}
+	
+	// Check for deadlock
+	if lm.wouldCauseDeadlock(transactionID, fmt.Sprintf("predicate:%s", predicate)) {
+		lm.mutex.Unlock()
+		return errors.New("deadlock detected")
+	}
+	
+	// Add to waiting queue
+	request := &LockRequest{
+		TransactionID: transactionID,
+		Key:           fmt.Sprintf("predicate:%s", predicate),
+		Type:          PredicateLock,
+		Predicate:     predicate,
+		AcquiredCh:    make(chan error, 1),
+	}
+	
+	lm.waitingRequests[request.Key] = append(lm.waitingRequests[request.Key], request)
+	lm.mutex.Unlock()
+	
+	// Wait for lock to be granted or timeout
+	select {
+	case err := <-request.AcquiredCh:
+		return err
+	case <-time.After(timeout):
+		lm.removeWaitingRequest(transactionID, request.Key)
+		return fmt.Errorf("predicate lock acquisition timeout for transaction %d on predicate %s", transactionID, predicate)
+	}
+}
+
+// Helper methods for range lock conflict detection
+func (lm *LockManager) canGrantRangeLock(startKey, endKey string, transactionID uint32) bool {
+	// Check for conflicts with existing point locks in the range
+	for key, locks := range lm.lockTable {
+		if key >= startKey && key <= endKey {
+			for _, lock := range locks {
+				if lock.TransactionID != transactionID {
+					return false
+				}
+			}
+		}
+	}
+	
+	// Check for conflicts with existing range locks
+	// TODO: Not implemented correctly, need to check for overlapping ranges
+	rangeLockKey := fmt.Sprintf("range:%s:%s", startKey, endKey)
+	if locks, exists := lm.lockTable[rangeLockKey]; exists {
+		for _, lock := range locks {
+			if lock.TransactionID != transactionID {
+				// Check for overlapping ranges
+				if lm.rangesOverlap(startKey, endKey, lock.StartKey, lock.EndKey) {
+					return false
+				}
+			}
+		}
+	}
+	
+	return true
+}
+
+func (lm *LockManager) canGrantPredicateLock(predicate string, transactionID uint32) bool {
+	// Predicate locks can conflict with overlapping predicates
+	predicateLockKey := fmt.Sprintf("predicate:%s", predicate)
+	if locks, exists := lm.lockTable[predicateLockKey]; exists {
+		for _, lock := range locks {
+			if lock.TransactionID != transactionID {
+				// For now, assume any predicate conflicts with the same predicate
+				// In a more sophisticated implementation, we'd analyze predicate overlap
+				return false
+			}
+		}
+	}
+	return true
+}
+
+func (lm *LockManager) grantRangeLock(lock *Lock) {
+	lm.lockTable[lock.Key] = append(lm.lockTable[lock.Key], lock)
+	lm.transactionLocks[lock.TransactionID] = append(lm.transactionLocks[lock.TransactionID], lock)
+}
+
+func (lm *LockManager) grantPredicateLock(lock *Lock) {
+	lm.lockTable[lock.Key] = append(lm.lockTable[lock.Key], lock)
+	lm.transactionLocks[lock.TransactionID] = append(lm.transactionLocks[lock.TransactionID], lock)
+}
+
+func (lm *LockManager) rangesOverlap(start1, end1, start2, end2 string) bool {
+	return !(end1 < start2 || end2 < start1)
 }

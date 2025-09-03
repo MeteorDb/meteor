@@ -187,21 +187,13 @@ func (tm *TransactionManager) AcquireReadLock(transactionId uint32, key string, 
 	timeout := 30 * time.Second
 	
 	switch isolationLevel {
-	case common.TXN_ISOLATION_READ_COMMITTED:
-		// Short duration read lock
-		// TODO: Might be useful to use AcquireLock instead of TryAcquireLock as single command operations (default read committed) will fail instantly if lock is not acquired.
-		return tm.lockManager.TryAcquireLock(transactionId, key, lockmanager.ReadLock)
-		
-	case common.TXN_ISOLATION_REPEATABLE_READ:
-		// Long duration read lock (held until transaction end)
-		return tm.lockManager.AcquireLock(transactionId, key, lockmanager.ReadLock, timeout)
-		
 	case common.TXN_ISOLATION_SNAPSHOT_ISOLATION:
 		// No locks needed for reads in snapshot isolation
 		return nil
 		
-	case common.TXN_ISOLATION_SERIALIZABLE:
-		// Long duration read lock for serializable isolation
+	case common.TXN_ISOLATION_READ_COMMITTED,
+		 common.TXN_ISOLATION_REPEATABLE_READ,
+		 common.TXN_ISOLATION_SERIALIZABLE:
 		return tm.lockManager.AcquireLock(transactionId, key, lockmanager.ReadLock, timeout)
 		
 	default:
@@ -288,7 +280,6 @@ func (tm *TransactionManager) ReadValue(transactionId uint32, key string, buffer
 		return tm.getVersionAtGsn(key, startGsn, bufferStore), nil
 
 	case common.TXN_ISOLATION_SERIALIZABLE:
-		// Read committed value with full consistency
 		return bufferStore.Get(key), nil
 
 	default:
@@ -318,17 +309,14 @@ func (tm *TransactionManager) ValidateWrite(transactionId uint32, key string, bu
 	
 	switch isolationLevel {
 	case common.TXN_ISOLATION_READ_COMMITTED,
-		 common.TXN_ISOLATION_REPEATABLE_READ:
+		 common.TXN_ISOLATION_REPEATABLE_READ,
+		 common.TXN_ISOLATION_SERIALIZABLE:
 		// Basic write validation - write lock should be sufficient
 		return nil
 		
 	case common.TXN_ISOLATION_SNAPSHOT_ISOLATION:
 		// First committer wins - check if key was modified since transaction start
 		return tm.validateFirstCommitterWins(transactionId, key, bufferStore)
-		
-	case common.TXN_ISOLATION_SERIALIZABLE:
-		// Full conflict detection
-		return tm.validateSerializableConflicts(transactionId, key)
 		
 	default:
 		return errors.New("unknown isolation level: " + isolationLevel)
@@ -357,15 +345,209 @@ func (tm *TransactionManager) validateFirstCommitterWins(transactionId uint32, k
 	return nil
 }
 
-// validateSerializableConflicts implements conflict detection for serializable isolation
-func (tm *TransactionManager) validateSerializableConflicts(transactionId uint32, key string) error {
-	// For serializable isolation, we rely on the locking mechanism
-	// The lock manager should prevent conflicting operations
-	
-	// Additional check: ensure we have the write lock
-	if !tm.lockManager.HasLock(transactionId, key, lockmanager.WriteLock) {
-		return errors.New("write lock not held for serializable transaction")
+// AcquireRangeLock acquires a range lock for serializable isolation
+func (tm *TransactionManager) AcquireRangeLock(transactionId uint32, startKey, endKey string) error {
+	isolationLevel, err := tm.GetIsolationLevel(transactionId)
+	if err != nil {
+		return err
 	}
-	
-	return nil
+
+	// Only acquire range lock for serializable isolation
+	if isolationLevel != common.TXN_ISOLATION_SERIALIZABLE {
+		return nil
+	}
+
+	timeout := 30 * time.Second
+	return tm.lockManager.AcquireRangeLock(transactionId, startKey, endKey, timeout)
+}
+
+// AcquirePredicateLock acquires a predicate lock for serializable isolation
+func (tm *TransactionManager) AcquirePredicateLock(transactionId uint32, predicate string) error {
+	isolationLevel, err := tm.GetIsolationLevel(transactionId)
+	if err != nil {
+		return err
+	}
+
+	// Only acquire predicate lock for serializable isolation
+	if isolationLevel != common.TXN_ISOLATION_SERIALIZABLE {
+		return nil
+	}
+
+	timeout := 30 * time.Second
+	return tm.lockManager.AcquirePredicateLock(transactionId, predicate, timeout)
+}
+
+// ReadRangeValues reads all key-value pairs in a range, respecting transaction isolation
+func (tm *TransactionManager) ReadRangeValues(transactionId uint32, startKey, endKey string, bufferStore store.Store, conn *net.Conn) (map[string]*common.V, error) {
+	isolationLevel, err := tm.GetIsolationLevel(transactionId)
+	if err != nil {
+		return nil, err
+	}
+
+	result := make(map[string]*common.V)
+
+	// First, check transaction store for any modified keys in the range
+	transactionStore, err := tm.GetStoreByTransactionId(transactionId, conn)
+	if err != nil {
+		return nil, err
+	}
+
+	if transactionStore != nil {
+		result = transactionStore.ScanRange(startKey, endKey)
+	}
+
+	// Read from buffer store based on isolation level
+	var bufferResults map[string]*common.V
+	switch isolationLevel {
+	case common.TXN_ISOLATION_READ_COMMITTED,
+		 common.TXN_ISOLATION_REPEATABLE_READ,
+		 common.TXN_ISOLATION_SERIALIZABLE:
+		bufferResults = bufferStore.ScanRange(startKey, endKey)
+
+	case common.TXN_ISOLATION_SNAPSHOT_ISOLATION:
+		// For snapshot isolation, filter by transaction start GSN
+		startGsn, exists := tm.GetTransactionStartGsn(transactionId)
+		if !exists {
+			return nil, errors.New("transaction start GSN not found for snapshot isolation")
+		}
+		
+		// Get all keys in range and check their versions
+		allInRange := bufferStore.ScanRange(startKey, endKey)
+		bufferResults = make(map[string]*common.V)
+		for key := range allInRange {
+			if value := tm.getVersionAtGsn(key, startGsn, bufferStore); value != nil {
+				bufferResults[key] = value
+			}
+		}
+
+	default:
+		return nil, errors.New("unknown isolation level: " + isolationLevel)
+	}
+
+	// Merge buffer store results, but transaction store takes precedence
+	for key, value := range bufferResults {
+		if _, exists := result[key]; !exists {
+			result[key] = value
+		}
+	}
+
+	return result, nil
+}
+
+// ReadPrefixValues reads all key-value pairs with a given prefix, respecting transaction isolation
+func (tm *TransactionManager) ReadPrefixValues(transactionId uint32, prefix string, bufferStore store.Store, conn *net.Conn) (map[string]*common.V, error) {
+	isolationLevel, err := tm.GetIsolationLevel(transactionId)
+	if err != nil {
+		return nil, err
+	}
+
+	result := make(map[string]*common.V)
+
+	// First, check transaction store for any modified keys with the prefix
+	transactionStore, err := tm.GetStoreByTransactionId(transactionId, conn)
+	if err != nil {
+		return nil, err
+	}
+
+	if transactionStore != nil {
+		result = transactionStore.ScanPrefix(prefix)
+	}
+
+	// Read from buffer store based on isolation level
+	var bufferResults map[string]*common.V
+	switch isolationLevel {
+	case common.TXN_ISOLATION_READ_COMMITTED,
+		 common.TXN_ISOLATION_REPEATABLE_READ,
+		 common.TXN_ISOLATION_SERIALIZABLE:
+		bufferResults = bufferStore.ScanPrefix(prefix)
+
+	case common.TXN_ISOLATION_SNAPSHOT_ISOLATION:
+		// For snapshot isolation, filter by transaction start GSN
+		startGsn, exists := tm.GetTransactionStartGsn(transactionId)
+		if !exists {
+			return nil, errors.New("transaction start GSN not found for snapshot isolation")
+		}
+		
+		// Get all keys with prefix and check their versions
+		allWithPrefix := bufferStore.ScanPrefix(prefix)
+		bufferResults = make(map[string]*common.V)
+		for key := range allWithPrefix {
+			if value := tm.getVersionAtGsn(key, startGsn, bufferStore); value != nil {
+				bufferResults[key] = value
+			}
+		}
+
+	default:
+		return nil, errors.New("unknown isolation level: " + isolationLevel)
+	}
+
+	// Merge buffer store results, but transaction store takes precedence
+	for key, value := range bufferResults {
+		if _, exists := result[key]; !exists {
+			result[key] = value
+		}
+	}
+
+	return result, nil
+}
+
+// ReadFilteredValues reads all key-value pairs matching a filter function, respecting transaction isolation
+func (tm *TransactionManager) ReadFilteredValues(transactionId uint32, filterFunc func(string, *common.V) bool, bufferStore store.Store, conn *net.Conn) (map[string]*common.V, error) {
+	isolationLevel, err := tm.GetIsolationLevel(transactionId)
+	if err != nil {
+		return nil, err
+	}
+
+	result := make(map[string]*common.V)
+
+	// First, check transaction store for any modified keys that match the filter
+	transactionStore, err := tm.GetStoreByTransactionId(transactionId, conn)
+	if err != nil {
+		return nil, err
+	}
+
+	if transactionStore != nil {
+		result = transactionStore.ScanWithFilter(filterFunc)
+	}
+
+	// Read from buffer store based on isolation level
+	var bufferResults map[string]*common.V
+	switch isolationLevel {
+	case common.TXN_ISOLATION_READ_COMMITTED,
+		 common.TXN_ISOLATION_REPEATABLE_READ,
+		 common.TXN_ISOLATION_SERIALIZABLE:
+		bufferResults = bufferStore.ScanWithFilter(filterFunc)
+
+	case common.TXN_ISOLATION_SNAPSHOT_ISOLATION:
+		// For snapshot isolation, filter by transaction start GSN
+		startGsn, exists := tm.GetTransactionStartGsn(transactionId)
+		if !exists {
+			return nil, errors.New("transaction start GSN not found for snapshot isolation")
+		}
+		
+		// Create a filter that also checks GSN
+		snapshotFilter := func(key string, value *common.V) bool {
+			// First check if the value existed at transaction start
+			snapshotValue := tm.getVersionAtGsn(key, startGsn, bufferStore)
+			if snapshotValue == nil {
+				return false
+			}
+			// Apply the original filter to the snapshot value
+			return filterFunc(key, snapshotValue)
+		}
+		
+		bufferResults = bufferStore.ScanWithFilter(snapshotFilter)
+
+	default:
+		return nil, errors.New("unknown isolation level: " + isolationLevel)
+	}
+
+	// Merge buffer store results, but transaction store takes precedence
+	for key, value := range bufferResults {
+		if _, exists := result[key]; !exists {
+			result[key] = value
+		}
+	}
+
+	return result, nil
 }

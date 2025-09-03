@@ -43,19 +43,12 @@ func execCommit(dm *dbmanager.DBManager, commitArgs *CommitArgs, ctx *CommandCon
 		return nil, errors.New("transaction not found")
 	}
 
-	transactionRow := common.NewTransactionRow(transactionId, common.DB_OP_COMMIT, common.TRANSACTION_STATE_COMMIT, key, nil, nil)
-
-	err := dm.TransactionManager.AddTransaction(transactionRow, ctx.clientConnection)
-	if err != nil {
-		dm.TransactionManager.ClearTransactionStore(transactionId)
-		return nil, err
+	type validatedEntry struct {
+		key       *common.K
+		value     *common.V
 	}
 
-	err = dm.AddTransactionToWal(transactionRow)
-	if err != nil {
-		dm.TransactionManager.ClearTransactionStore(transactionId)
-		return nil, err
-	}
+	var validatedEntries []validatedEntry
 
 	// Apply changes from transaction store to buffer store with conflict detection
 	for _, keyStr := range transactionStore.Keys() {
@@ -104,8 +97,30 @@ func execCommit(dm *dbmanager.DBManager, commitArgs *CommitArgs, ctx *CommandCon
 			return nil, err
 		}
 
-		// Apply the change to buffer store
-		err = dm.StoreManager.BufferStore.Put(&common.K{Key: keyStr, Gsn: latestGsn}, value)
+		validatedEntries = append(validatedEntries, validatedEntry{
+			key:       &common.K{Key: keyStr, Gsn: latestGsn},
+			value:     value,
+		})
+	}
+
+	// All validations passed, now add transaction row to WAL
+	transactionRow := common.NewTransactionRow(transactionId, common.DB_OP_COMMIT, common.TRANSACTION_STATE_COMMIT, key, nil, nil)
+
+	err := dm.TransactionManager.AddTransaction(transactionRow, ctx.clientConnection)
+	if err != nil {
+		dm.TransactionManager.ClearTransactionStore(transactionId)
+		return nil, err
+	}
+
+	err = dm.AddTransactionToWal(transactionRow)
+	if err != nil {
+		dm.TransactionManager.ClearTransactionStore(transactionId)
+		return nil, err
+	}
+
+	// Apply all validated entries to buffer store
+	for _, entry := range validatedEntries {
+		err = dm.StoreManager.BufferStore.Put(entry.key, entry.value)
 		if err != nil {
 			// Clean up and return error
 			dm.TransactionManager.ClearTransactionStore(transactionId)

@@ -99,19 +99,12 @@ func execGet(dm *dbmanager.DBManager, getArgs *GetArgs, ctx *CommandContext) ([]
 		valueToReturn = v.Value
 	}
 
-	// Store read value in transaction store for REPEATABLE_READ and SNAPSHOT_ISOLATION
+	// Store read value in transaction store for REPEATABLE_READ, SNAPSHOT_ISOLATION and SERIALIZABLE
 	// So following GET queries return the same value as the first get query even if the value is changed by other transactions
-	if isolationLevel == common.TXN_ISOLATION_REPEATABLE_READ || 
-	   isolationLevel == common.TXN_ISOLATION_SNAPSHOT_ISOLATION {
-		gsn, _ := dm.StoreManager.BufferStore.GetLatestGsn(key)
-		keyObj := &common.K{Key: key, Gsn: gsn}
-		transactionRow := common.NewTransactionRow(transactionId, common.DB_OP_GET, common.TRANSACTION_STATE_QUEUED, keyObj, nil, valueToStore)
-		err := dm.TransactionManager.AddTransaction(transactionRow, ctx.clientConnection)
-		if err != nil {
-			dm.TransactionManager.ClearTransactionStore(transactionId)
-			return nil, err
-		}
-		_ = dm.AddTransactionToWal(transactionRow) // Optional
+	err = addReadValueToTxnStore(dm, transactionId, key, valueToStore, isolationLevel, ctx.clientConnection)
+	if err != nil {
+		dm.TransactionManager.ClearTransactionStore(transactionId)
+		return nil, err
 	}
 
 	return valueToReturn, nil
