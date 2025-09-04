@@ -72,7 +72,7 @@ func (cli *MeteorCLI) SendCommand(command string) (string, error) {
 
 	// Read response
 	buffer := make([]byte, 4096)
-	cli.conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+	cli.conn.SetReadDeadline(time.Now().Add(60 * time.Second)) // 1 minute timeout
 	n, err := cli.conn.Read(buffer)
 	if err != nil {
 		return "", fmt.Errorf("failed to read response: %v", err)
@@ -82,29 +82,24 @@ func (cli *MeteorCLI) SendCommand(command string) (string, error) {
 	return response, nil
 }
 
-// ParseCommand parses user input and handles transaction state
+// ParseCommand handles transaction state and forwards commands to server
 func (cli *MeteorCLI) ParseCommand(input string) (string, error) {
 	input = strings.TrimSpace(input)
 	if input == "" {
 		return "", nil
 	}
 
-	parts := strings.Fields(input)
-	operation := strings.ToUpper(parts[0])
+	// Extract just the operation name for client-side handling
+	firstSpace := strings.Index(input, " ")
+	var operation string
+	if firstSpace == -1 {
+		operation = strings.ToUpper(input)
+	} else {
+		operation = strings.ToUpper(input[:firstSpace])
+	}
 
+	// Handle client-only commands
 	switch operation {
-	case "BEGIN":
-		return cli.handleBegin(parts)
-	case "COMMIT":
-		return cli.handleCommit(parts)
-	case "ROLLBACK":
-		return cli.handleRollback(parts)
-	case "PUT":
-		return cli.handlePut(parts)
-	case "GET":
-		return cli.handleGet(parts)
-	case "DELETE":
-		return cli.handleDelete(parts)
 	case "HELP", "\\H":
 		cli.showHelp()
 		return "", nil
@@ -113,20 +108,30 @@ func (cli *MeteorCLI) ParseCommand(input string) (string, error) {
 	case "STATUS":
 		cli.showStatus()
 		return "", nil
+	}
+
+	// Handle transaction commands with state tracking
+	switch operation {
+	case "BEGIN":
+		return cli.handleBegin(input)
+	case "COMMIT":
+		return cli.handleCommit(input)
+	case "ROLLBACK":
+		return cli.handleRollback(input)
 	default:
-		return "", fmt.Errorf("unknown command: %s. Type 'help' for available commands", operation)
+		// All other commands are forwarded with transaction ID if needed
+		return cli.handleDataCommand(input)
 	}
 }
 
 // handleBegin processes BEGIN command
-func (cli *MeteorCLI) handleBegin(parts []string) (string, error) {
+func (cli *MeteorCLI) handleBegin(input string) (string, error) {
 	if cli.txnState.InTransaction {
 		return "", fmt.Errorf("already in transaction %s. COMMIT or ROLLBACK first", cli.txnState.TransactionID)
 	}
 
-	// Forward the command as-is to the server
-	command := strings.Join(parts, " ")
-	response, err := cli.SendCommand(command)
+	// Forward the raw command to the server
+	response, err := cli.SendCommand(input)
 	if err != nil {
 		return "", err
 	}
@@ -150,52 +155,38 @@ func (cli *MeteorCLI) handleBegin(parts []string) (string, error) {
 }
 
 // handleCommit processes COMMIT command
-func (cli *MeteorCLI) handleCommit(parts []string) (string, error) {
-	if err := cli.validateTransactionState(true, "commit"); err != nil {
-		return "", err
+func (cli *MeteorCLI) handleCommit(input string) (string, error) {
+	if !cli.txnState.InTransaction {
+		return "", fmt.Errorf("no active transaction to commit")
 	}
 
+	// Send COMMIT with transaction ID
 	command := fmt.Sprintf("COMMIT %s", cli.txnState.TransactionID)
 	return cli.executeCommandWithErrorHandling(command, CommandTypeTransactionEnd)
 }
 
 // handleRollback processes ROLLBACK command
-func (cli *MeteorCLI) handleRollback(parts []string) (string, error) {
-	if err := cli.validateTransactionState(true, "rollback"); err != nil {
-		return "", err
+func (cli *MeteorCLI) handleRollback(input string) (string, error) {
+	if !cli.txnState.InTransaction {
+		return "", fmt.Errorf("no active transaction to rollback")
 	}
 
+	// Send ROLLBACK with transaction ID
 	command := fmt.Sprintf("ROLLBACK %s", cli.txnState.TransactionID)
 	return cli.executeCommandWithErrorHandling(command, CommandTypeTransactionEnd)
 }
 
-// handlePut processes PUT command
-func (cli *MeteorCLI) handlePut(parts []string) (string, error) {
-	if err := cli.validateArgumentCount(parts, 3, "PUT command requires key and value: PUT <key> <value>"); err != nil {
-		return "", err
+// handleDataCommand forwards data commands to server with transaction ID if needed
+func (cli *MeteorCLI) handleDataCommand(input string) (string, error) {
+	var command string
+	if cli.txnState.InTransaction {
+		// Add transaction ID to the command for transactional operations
+		command = fmt.Sprintf("%s %s", input, cli.txnState.TransactionID)
+	} else {
+		// Send command as-is for non-transactional operations
+		command = input
 	}
-
-	command := cli.buildCommandWithTransactionID(parts)
-	return cli.executeCommandWithErrorHandling(command, CommandTypeData)
-}
-
-// handleGet processes GET command
-func (cli *MeteorCLI) handleGet(parts []string) (string, error) {
-	if err := cli.validateArgumentCount(parts, 2, "GET command requires key: GET <key>"); err != nil {
-		return "", err
-	}
-
-	command := cli.buildCommandWithTransactionID(parts)
-	return cli.executeCommandWithErrorHandling(command, CommandTypeData)
-}
-
-// handleDelete processes DELETE command
-func (cli *MeteorCLI) handleDelete(parts []string) (string, error) {
-	if err := cli.validateArgumentCount(parts, 2, "DELETE command requires key: DELETE <key>"); err != nil {
-		return "", err
-	}
-
-	command := cli.buildCommandWithTransactionID(parts)
+	
 	return cli.executeCommandWithErrorHandling(command, CommandTypeData)
 }
 
@@ -242,32 +233,6 @@ func (cli *MeteorCLI) executeCommandWithErrorHandling(command string, cmdType Co
 	return response, nil
 }
 
-// buildCommandWithTransactionID builds a command string, adding transaction ID if in transaction
-func (cli *MeteorCLI) buildCommandWithTransactionID(parts []string) string {
-	if !cli.txnState.InTransaction || len(parts) == 0 {
-		// Not in transaction or invalid parts - use command as-is
-		return strings.Join(parts, " ")
-	}
-
-	// Add transaction ID to the command for transactional operations
-	return fmt.Sprintf("%s %s", strings.Join(parts, " "), cli.txnState.TransactionID)
-}
-
-// validateTransactionState validates if we're in the expected transaction state
-func (cli *MeteorCLI) validateTransactionState(requiredState bool, action string) error {
-	if requiredState && !cli.txnState.InTransaction {
-		return fmt.Errorf("no active transaction to %s", action)
-	}
-	return nil
-}
-
-// validateArgumentCount validates the number of command arguments
-func (cli *MeteorCLI) validateArgumentCount(parts []string, minArgs int, usage string) error {
-	if len(parts) < minArgs {
-		return fmt.Errorf("%s", usage)
-	}
-	return nil
-}
 
 // updatePrompt updates the CLI prompt based on transaction state
 func (cli *MeteorCLI) updatePrompt() {
@@ -287,6 +252,10 @@ func (cli *MeteorCLI) showHelp() {
 	fmt.Println("  PUT <key> <value>        - Insert or update a key-value pair")
 	fmt.Println("  GET <key>                - Retrieve value for a key")
 	fmt.Println("  DELETE <key>             - Delete a key")
+	fmt.Println("  CGET \"<WHERE condition>\" - Conditional get with WHERE clause")
+	fmt.Println("  RGET <startKey> <endKey> - Range get between start and end keys")
+	fmt.Println("  COUNT [\"<WHERE condition>\"] - Count records, optionally with WHERE clause")
+	fmt.Println("  SCAN <pattern> [\"<WHERE condition>\"] - Scan with pattern and optional filter")
 	fmt.Println("  COMMIT                   - Commit current transaction")
 	fmt.Println("  ROLLBACK                 - Rollback current transaction")
 	fmt.Println("  STATUS                   - Show current transaction status")
@@ -297,6 +266,8 @@ func (cli *MeteorCLI) showHelp() {
 	fmt.Println("  - Commands outside transactions auto-commit")
 	fmt.Println("  - Commands inside transactions are queued until COMMIT")
 	fmt.Println("  - Transaction IDs are managed automatically")
+	fmt.Println("  - Use quotes around conditions with spaces: CGET \"WHERE status = 'active user'\"")
+	fmt.Println("  - Supports both single and double quotes in arguments")
 }
 
 // showStatus displays current transaction status
@@ -347,6 +318,7 @@ func (cli *MeteorCLI) Run() {
 		}
 	}
 }
+
 
 func main() {
 	// Default connection parameters
